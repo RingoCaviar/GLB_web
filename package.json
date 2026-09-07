@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "sequence:prepare": "node scripts/generate-sequence-previews.mjs",
+    "environment:preprocess": "node scripts/preprocess-environments.mjs --size 2048",
     "dev": "vite --host 0.0.0.0",
     "build": "vite build && node scripts/create-static-launcher.mjs",
     "preview": "vite preview --host 0.0.0.0",
@@ -20,6 +21,7 @@
     "test:studio": "node tests/render-studio.mjs",
     "test:studio-parameters": "node tests/render-studio-parameters.mjs",
     "test:environment-preview": "node tests/environment-preview.mjs",
+    "test:environment-preprocess": "node tests/environment-preprocess.mjs",
     "test:lighting": "node tests/lighting-default-middleware.mjs",
     "test:fixed-render": "node tests/fixed-size-render.mjs",
     "test:model-loading": "node tests/model-loading.mjs",

@@ -32,6 +32,7 @@ echo   [6] 删除项目运行环境与依赖
 echo   [7] 清理构建缓存和日志
 echo   [8] 一键重启局域网服务
 echo   [9] 构建静态部署包
+echo   [10] 预处理环境贴图（1K/2K + 去色）
 echo   [0] 退出
 echo.
 set "CHOICE="
@@ -46,6 +47,7 @@ if "%CHOICE%"=="6" goto remove_environment
 if "%CHOICE%"=="7" goto clean_runtime
 if "%CHOICE%"=="8" goto restart_service
 if "%CHOICE%"=="9" goto build_static_deployment
+if "%CHOICE%"=="10" goto preprocess_environments
 if "%CHOICE%"=="0" goto end
 echo.
 echo [错误] 无效选项，请重新输入。
@@ -451,6 +453,49 @@ if errorlevel 1 (
 echo.
 echo 3 秒后返回菜单...
 timeout /t 3 /nobreak >nul
+goto menu
+:preprocess_environments
+call :quick_check
+if "!QUICK_OK!"=="0" (
+  echo.
+  echo [停止] 缺少必要项目文件或依赖，请先安装项目环境。
+  echo.
+  pause
+  goto menu
+)
+
+echo.
+echo 此操作会处理 public\environments 中所有 HDR 与 EXR 文件：
+echo   - 彩色环境贴图缩放为 1K 或 2K
+echo   - 自动生成对应的 1K 去色 HDR
+echo   - EXR 原件转换成功后会被删除，避免重复占用空间
+echo.
+set "ENV_SIZE="
+set /p "ENV_SIZE=请输入彩色 HDRI 宽度 [1=1K, 2=2K]："
+if "!ENV_SIZE!"=="1" set "ENV_WIDTH=1024"
+if "!ENV_SIZE!"=="2" set "ENV_WIDTH=2048"
+if not defined ENV_WIDTH (
+  echo [取消] 请输入 1 或 2。
+  pause
+  goto menu
+)
+set "ENV_CONFIRM="
+set /p "ENV_CONFIRM=确认处理并删除 EXR 原件？请输入 PROCESS："
+if /i not "!ENV_CONFIRM!"=="PROCESS" (
+  echo [取消] 未修改环境贴图。
+  pause
+  goto menu
+)
+echo.
+echo 正在预处理环境贴图...
+"!NODE_CMD!" scripts\preprocess-environments.mjs --size !ENV_WIDTH!
+if errorlevel 1 (
+  echo [失败] 环境贴图预处理失败，请查看上方信息。
+) else (
+  echo [完成] 环境贴图预处理完成。重启服务或执行构建后即可生效。
+)
+echo.
+pause
 goto menu
 :clean_runtime
 echo.
