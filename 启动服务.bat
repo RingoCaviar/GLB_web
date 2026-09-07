@@ -467,10 +467,6 @@ choice /c 12 /n /m "Select size: 1=1K or 2=2K"
 if errorlevel 2 set "ENV_WIDTH=2048"
 if errorlevel 1 set "ENV_WIDTH=1024"
 echo.
-set "ENV_CONFIRM="
-set /p "ENV_CONFIRM=Type PROCESS to continue: "
-if /i not "!ENV_CONFIRM!"=="PROCESS" goto preprocess_cancelled
-echo.
 echo Processing environment maps...
 "!NODE_CMD!" scripts\preprocess-environments.mjs --size !ENV_WIDTH!
 if errorlevel 1 goto preprocess_failed
@@ -482,11 +478,6 @@ goto menu
 
 :preprocess_missing
 echo [STOP] Missing project files or dependencies.
-pause
-goto menu
-
-:preprocess_cancelled
-echo [CANCELLED] No environment files were changed.
 pause
 goto menu
 
