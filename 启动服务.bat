@@ -456,47 +456,45 @@ timeout /t 3 /nobreak >nul
 goto menu
 :preprocess_environments
 call :quick_check
-if "!QUICK_OK!"=="0" (
-  echo.
-  echo [停止] 缺少必要项目文件或依赖，请先安装项目环境。
-  echo.
-  pause
-  goto menu
-)
-
+if "!QUICK_OK!"=="0" goto preprocess_missing
 echo.
-echo 此操作会处理 public\environments 中所有 HDR 与 EXR 文件：
-echo   - 彩色环境贴图缩放为 1K 或 2K
-echo   - 自动生成对应的 1K 去色 HDR
-echo   - EXR 原件转换成功后会被删除，避免重复占用空间
+echo Environment preprocess:
+echo - Select color HDRI width.
+echo - A grayscale HDRI will be created.
+echo - Converted EXR source files will be removed.
 echo.
-set "ENV_SIZE="
-set /p "ENV_SIZE=请输入彩色 HDRI 宽度 [1=1K, 2=2K]："
-if "!ENV_SIZE!"=="1" set "ENV_WIDTH=1024"
-if "!ENV_SIZE!"=="2" set "ENV_WIDTH=2048"
-if not defined ENV_WIDTH (
-  echo [取消] 请输入 1 或 2。
-  pause
-  goto menu
-)
+choice /c 12 /n /m "Select size: 1=1K or 2=2K"
+if errorlevel 2 set "ENV_WIDTH=2048"
+if errorlevel 1 set "ENV_WIDTH=1024"
+echo.
 set "ENV_CONFIRM="
-set /p "ENV_CONFIRM=确认处理并删除 EXR 原件？请输入 PROCESS："
-if /i not "!ENV_CONFIRM!"=="PROCESS" (
-  echo [取消] 未修改环境贴图。
-  pause
-  goto menu
-)
+set /p "ENV_CONFIRM=Type PROCESS to continue: "
+if /i not "!ENV_CONFIRM!"=="PROCESS" goto preprocess_cancelled
 echo.
-echo 正在预处理环境贴图...
+echo Processing environment maps...
 "!NODE_CMD!" scripts\preprocess-environments.mjs --size !ENV_WIDTH!
-if errorlevel 1 (
-  echo [失败] 环境贴图预处理失败，请查看上方信息。
-) else (
-  echo [完成] 环境贴图预处理完成。重启服务或执行构建后即可生效。
-)
+if errorlevel 1 goto preprocess_failed
+echo [DONE] Environment preprocess completed.
+echo Restart the service or build static deployment to apply changes.
 echo.
 pause
 goto menu
+
+:preprocess_missing
+echo [STOP] Missing project files or dependencies.
+pause
+goto menu
+
+:preprocess_cancelled
+echo [CANCELLED] No environment files were changed.
+pause
+goto menu
+
+:preprocess_failed
+echo [FAILED] Environment preprocess failed. See the message above.
+pause
+goto menu
+
 :clean_runtime
 echo.
 echo ==================================================
