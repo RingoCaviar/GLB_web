@@ -1,0 +1,4 @@
+interface:
+  display_name: "GLB Web 项目导航"
+  short_description: "修改前先读项目地图，修改后维护架构并智能评估中文提交"
+  default_prompt: "Use $glb-web-project to inspect the project map before making this change, then update the map and assess whether a Chinese commit is warranted."

@@ -1,0 +1,40 @@
+{
+  "name": "glb-lan-viewer",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "sequence:prepare": "node scripts/generate-sequence-previews.mjs",
+    "dev": "vite --host 0.0.0.0",
+    "build": "vite build && node scripts/create-static-launcher.mjs",
+    "preview": "vite preview --host 0.0.0.0",
+    "test:camera": "node tests/camera-constraints.mjs",
+    "test:shared-camera": "node tests/shared-camera-framing.mjs",
+    "test:camera-application": "node tests/camera-framing-application.mjs",
+    "test:vertical-shift": "node tests/vertical-lens-shift.mjs",
+    "test:vertical-shift-projection": "node tests/vertical-lens-shift-projection.mjs",
+    "test:vertical-shift-browser": "npm run build && node tests/vertical-lens-shift-browser.mjs",
+    "test:thumbnail": "node tests/thumbnail-middleware.mjs",
+    "test:thumbnail-camera": "node tests/thumbnail-camera-framing.mjs",
+    "test:sequence": "node tests/sequence-previews.mjs",
+    "test:studio": "node tests/render-studio.mjs",
+    "test:studio-parameters": "node tests/render-studio-parameters.mjs",
+    "test:environment-preview": "node tests/environment-preview.mjs",
+    "test:lighting": "node tests/lighting-default-middleware.mjs",
+    "test:fixed-render": "node tests/fixed-size-render.mjs",
+    "test:model-loading": "node tests/model-loading.mjs",
+    "test:model-appearance": "node tests/model-appearance.mjs",
+    "test:export": "node tests/png-export.mjs",
+    "test:export-quality": "node tests/export-quality.mjs",
+    "test:webgl-capabilities": "node tests/webgl-capabilities.mjs"
+  },
+  "dependencies": {
+    "@google/model-viewer": "4.3.1",
+    "three": "0.183.0"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.55.0",
+    "sharp": "0.35.3",
+    "vite": "7.3.6"
+  }
+}

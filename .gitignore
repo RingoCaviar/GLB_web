@@ -1,0 +1,27 @@
+node_modules/
+dist/
+*.zip
+.runtime/
+.vite/
+
+# 本地渲染设置（每台机器独立，不纳入版本控制）
+config/default-lighting.json
+public/environments/.generated/
+
+# Large local resource libraries (not version-controlled)
+models/
+image_sequence/
+
+# 本地服务状态与日志
+.glb-viewer.pid
+.glb-viewer-*.log
+.vite-*.log
+models/**/*.cover.webp.*.tmp
+image_sequence/.generated/
+
+# 编辑器与系统文件
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.swp
