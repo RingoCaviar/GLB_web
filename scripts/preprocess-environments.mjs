@@ -80,6 +80,15 @@ export function resizeFloat(data, width, height, targetWidth) {
   return { data: output, width: targetWidth, height: targetHeight };
 }
 
+export function flipVertically(data, width, height) {
+  const output = new Float32Array(data.length);
+  const rowLength = width * 4;
+  for (let y = 0; y < height; y += 1) {
+    output.set(data.subarray(y * rowLength, (y + 1) * rowLength), (height - 1 - y) * rowLength);
+  }
+  return output;
+}
+
 export function grayscaleFloat(data) {
   const output = new Float32Array(data.length);
   for (let index = 0; index < data.length; index += 4) {
@@ -104,7 +113,9 @@ async function preprocessFile(file, colorWidth) {
   }
   const sourceBytes = await readFile(source); const buffer = sourceBytes.buffer.slice(sourceBytes.byteOffset, sourceBytes.byteOffset + sourceBytes.byteLength);
   const texture = extension === '.exr' ? new EXRLoader().setDataType(FloatType).parse(buffer) : new RGBELoader().setDataType(FloatType).parse(buffer);
-  const color = resizeFloat(texture.data, texture.width, texture.height, colorWidth);
+  // EXRLoader data uses the opposite vertical origin to the Radiance HDR scanline order.
+  const oriented = extension === '.exr' ? flipVertically(texture.data, texture.width, texture.height) : texture.data;
+  const color = resizeFloat(oriented, texture.width, texture.height, colorWidth);
   const grayscale = resizeFloat(color.data, color.width, color.height, Math.min(1024, colorWidth));
   await writeAtomically(colorOutput, encodeHdr(color.data, color.width, color.height));
   await writeAtomically(grayscaleOutput, encodeHdr(grayscaleFloat(grayscale.data), grayscale.width, grayscale.height));
