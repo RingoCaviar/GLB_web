@@ -55,10 +55,11 @@ assert.deepEqual(applyBuildingCorrection({
   radius: 4,
   fov: 42,
   verticalShift: 0.2,
-}), {
+}, true), {
   theta: 35,
-  phi: 90,
+  phi: 61,
   radius: 4,
   fov: 42,
   verticalShift: 0.2,
+  buildingCorrection: true,
 });

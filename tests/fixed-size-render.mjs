@@ -55,6 +55,33 @@ function fixture(overrides = {}) {
 }
 
 {
+  const item = fixture();
+  const observedStyles = [];
+  item.runtime.readDrawingBuffer = () => {
+    observedStyles.push({ width: item.viewer.style.width, height: item.viewer.style.height });
+    return observedStyles.length === 1
+      ? { width: 512, height: 384 }
+      : { width: 640, height: 480 };
+  };
+  await renderFixedSizeImage(item.viewer, { width: 640, height: 480 }, item.runtime);
+  assert.deepEqual(observedStyles, [
+    { width: '320px', height: '240px' },
+    { width: '400px', height: '300px' },
+  ], '浏览器缩放导致缓冲区比例偏差时应按实测值自动校准');
+  assert.deepEqual(item.viewer.style, originalStyle);
+}
+
+for (const effectiveScale of [0.5, 0.8, 1.25, 1.5, 2]) {
+  const item = fixture();
+  item.runtime.readDrawingBuffer = () => ({
+    width: Math.round(Number.parseFloat(item.viewer.style.width) * effectiveScale),
+    height: Math.round(Number.parseFloat(item.viewer.style.height) * effectiveScale),
+  });
+  await renderFixedSizeImage(item.viewer, { width: 640, height: 480 }, item.runtime);
+  assert.deepEqual(item.viewer.style, originalStyle, `${effectiveScale}× 缩放后应恢复预览样式`);
+}
+
+{
   const { viewer, runtime, calls } = fixture();
   let appliedFraming;
   runtime.createCameraFramingSession = (target, framing) => ({
@@ -95,15 +122,6 @@ function fixture(overrides = {}) {
   await assert.rejects(
     renderFixedSizeImage(item.viewer, { width: 640, height: 480, textureDetailMode: 'base-level' }, item.runtime),
     (error) => error.code === 'TEXTURE_DETAIL_UNAVAILABLE',
-  );
-}
-
-{
-  const item = fixture();
-  item.runtime.readDrawingBuffer = () => ({ width: 5760, height: 5760 });
-  await assert.rejects(
-    renderFixedSizeImage(item.viewer, { width: 8192, height: 8192 }, item.runtime),
-    (error) => error.code === 'RENDER_BUFFER_TOO_SMALL' && error.details.width === 5760,
   );
 }
 

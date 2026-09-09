@@ -5,6 +5,7 @@ const STYLE_FIELDS = [
 ];
 const DEFAULT_TIMEOUT_MS = 30000;
 const STABLE_FRAME_COUNT = 8;
+const BUFFER_CALIBRATION_ATTEMPTS = 3;
 
 export class FixedSizeRenderError extends Error {
   constructor(code, { cause, restorationErrors = [], details = null } = {}) {
@@ -70,6 +71,24 @@ async function restoreInReverse(restorers) {
     }
   }
   return errors;
+}
+
+async function calibrateDrawingBuffer(viewer, { width, height, readDrawingBuffer, waitUntilStable }) {
+  if (!readDrawingBuffer) return null;
+  let drawingBuffer = readDrawingBuffer(viewer);
+  for (let attempt = 0; attempt < BUFFER_CALIBRATION_ATTEMPTS; attempt++) {
+    if (!drawingBuffer || (drawingBuffer.width === width && drawingBuffer.height === height)) {
+      return drawingBuffer;
+    }
+    if (drawingBuffer.width <= 0 || drawingBuffer.height <= 0) break;
+    const cssWidth = Number.parseFloat(viewer.style.width);
+    const cssHeight = Number.parseFloat(viewer.style.height);
+    viewer.style.width = `${cssWidth * width / drawingBuffer.width}px`;
+    viewer.style.height = `${cssHeight * height / drawingBuffer.height}px`;
+    await waitUntilStable();
+    drawingBuffer = readDrawingBuffer(viewer);
+  }
+  return drawingBuffer;
 }
 
 export async function renderFixedSizeImage(viewer, {
@@ -154,8 +173,23 @@ export async function renderFixedSizeImage(viewer, {
     }
     await withDeadline(waitForFrames(STABLE_FRAME_COUNT, requestFrame), { signal, timeoutMs, setTimer, clearTimer });
     throwIfAborted(signal);
-    const drawingBuffer = runtime.readDrawingBuffer?.(viewer);
-    if (drawingBuffer && (drawingBuffer.width < width || drawingBuffer.height < height)) {
+    const waitUntilStable = async () => {
+      await withDeadline(Promise.resolve(viewer.updateComplete), { signal, timeoutMs, setTimer, clearTimer });
+      if (cameraFraming) {
+        await withDeadline(
+          Promise.resolve(cameraFramingSession.apply({ width, height })),
+          { signal, timeoutMs, setTimer, clearTimer },
+        );
+      }
+      await withDeadline(waitForFrames(STABLE_FRAME_COUNT, requestFrame), { signal, timeoutMs, setTimer, clearTimer });
+    };
+    const drawingBuffer = await calibrateDrawingBuffer(viewer, {
+      width,
+      height,
+      readDrawingBuffer: runtime.readDrawingBuffer,
+      waitUntilStable,
+    });
+    if (drawingBuffer && (drawingBuffer.width !== width || drawingBuffer.height !== height)) {
       throw new FixedSizeRenderError('RENDER_BUFFER_TOO_SMALL', {
         details: { requestedWidth: width, requestedHeight: height, ...drawingBuffer },
       });

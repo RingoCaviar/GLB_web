@@ -59,6 +59,7 @@ const state = {
   radius: 1,
   fov: sharedCameraFraming.fov,
   verticalShift: sharedCameraFraming.verticalShift,
+  buildingCorrection: sharedCameraFraming.buildingCorrection,
   width: 2048,
   height: 2048,
   maximumExportDimension: 8192,
@@ -137,7 +138,7 @@ document.querySelector('#app').innerHTML = `
           shadow-softness="0.9"
           environment-image="neutral"
           tone-mapping="neutral"
-          interaction-prompt="auto"
+          interaction-prompt="none"
           interpolation-decay="100"
           >
           </model-viewer>
@@ -234,7 +235,10 @@ document.querySelector('#app').innerHTML = `
         ${controlTemplate('相机距离', 'radius', 0.000001, 10, 0.001, 'm')}
         ${controlTemplate('垂直 FOV', 'fov', 10, 90, 1, '°')}
         ${controlTemplate('垂直镜头偏移', 'verticalShift', -50, 50, 1, '%')}
-        <button class="secondary-button" id="buildingCorrection" type="button">建筑校正（相机水平）</button>
+        <label class="switch-row">
+          <span><strong>建筑透视校正</strong><small>保持相机角度不变，使竖直线平行</small></span>
+          <input id="buildingCorrection" type="checkbox" role="switch"><i></i>
+        </label>
         <button class="secondary-button" id="resetCamera" type="button">重置视角</button>
       </section>
 
@@ -364,7 +368,7 @@ function setVerticalShiftAvailable(available) {
 }
 
 function applyLensProjection(target, framing) {
-  return applyVerticalLensShift(target, framing.verticalShift);
+  return applyVerticalLensShift(target, framing.verticalShift, {}, framing.buildingCorrection);
 }
 
 function setStatus(text, type = '') {
@@ -844,6 +848,7 @@ async function resetModelRuntime() {
   setControl('radius', 1);
   setControl('fov', state.fov);
   setControl('verticalShift', state.verticalShift);
+  document.querySelector('#buildingCorrection').checked = state.buildingCorrection;
   document.querySelector('#radiusRange').min = 0.000001;
   document.querySelector('#radiusRange').max = 10;
   document.querySelector('#radiusNumber').min = 0.000001;
@@ -1252,15 +1257,21 @@ document.querySelector('#resetCamera').addEventListener('click', async () => {
   if (defaultRadius !== null) setControl('radius', roundDistance(defaultRadius));
   setControl('fov', 45);
   setControl('verticalShift', 0);
+  state.buildingCorrection = false;
+  document.querySelector('#buildingCorrection').checked = false;
+  saveSharedCameraFraming(state);
   await applyCamera({ immediate: true });
   showMessage('已恢复默认视角。', 'success');
 });
 
-document.querySelector('#buildingCorrection').addEventListener('click', async () => {
-  const corrected = applyBuildingCorrection(state);
-  setControl('phi', corrected.phi);
+document.querySelector('#buildingCorrection').addEventListener('change', async (event) => {
+  const corrected = applyBuildingCorrection(state, event.target.checked);
+  state.buildingCorrection = corrected.buildingCorrection;
+  saveSharedCameraFraming(state);
   await applyCamera({ immediate: true });
-  showMessage('相机已保持水平，可用垂直镜头偏移调整建筑构图。', 'success');
+  showMessage(state.buildingCorrection
+    ? '已开启建筑透视校正；相机角度保持不变。'
+    : '已关闭建筑透视校正。', 'success');
 });
 
 function cameraDefaults() {
@@ -1472,7 +1483,7 @@ async function performExportImage(signal) {
       : drawingBufferTooSmall
         ? `浏览器实际只能绘制 ${state.width} × ${state.height}；已自动填入该尺寸，未生成裁剪图。请再次点击导出。`
       : mismatch
-        ? '浏览器未能生成精确尺寸，请将系统显示缩放设为 100% 后重试。'
+        ? '浏览器未能生成精确尺寸，请降低导出尺寸后重试。'
         : '导出失败。此分辨率可能超过当前设备的 WebGL 或显存上限，请降低尺寸后重试。', 'error');
     if (hasRenderRestorationFailure(error)) throw error;
   } finally {

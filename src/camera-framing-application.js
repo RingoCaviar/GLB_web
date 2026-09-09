@@ -1,5 +1,5 @@
-export function applyBuildingCorrection(framing) {
-  return { ...framing, phi: 90 };
+export function applyBuildingCorrection(framing, enabled) {
+  return { ...framing, buildingCorrection: Boolean(enabled) };
 }
 
 export async function applyViewerCameraFraming(viewer, framing, {

@@ -5,6 +5,7 @@ const DEFAULT_THUMBNAIL_CAMERA_FRAMING = Object.freeze({
   phi: 75,
   fov: 45,
   verticalShift: 0,
+  buildingCorrection: false,
 });
 
 export function resolveThumbnailCameraFraming(sharedCameraFraming) {

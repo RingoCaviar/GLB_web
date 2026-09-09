@@ -47,7 +47,17 @@ try {
   await page.locator('#libraryGrid button').first().click();
   await page.waitForFunction(() => document.querySelector('#modelStatus')?.textContent?.trim() &&
     !document.querySelector('#modelStatus').textContent.includes('正在'));
+  const orbitBeforeCorrection = await page.locator('#modelViewer').evaluate((viewer) => {
+    const orbit = viewer.getCameraOrbit();
+    return { theta: orbit.theta, phi: orbit.phi, radius: orbit.radius, fov: viewer.getFieldOfView() };
+  });
   await page.locator('#buildingCorrection').click();
+  const orbitAfterCorrection = await page.locator('#modelViewer').evaluate((viewer) => {
+    const orbit = viewer.getCameraOrbit();
+    return { theta: orbit.theta, phi: orbit.phi, radius: orbit.radius, fov: viewer.getFieldOfView() };
+  });
+  assert.deepEqual(orbitAfterCorrection, orbitBeforeCorrection,
+    '建筑透视校正不得改变相机角度、距离或 FOV');
 
   await setShift(page, 0);
   const zeroImage = await page.locator('#modelViewer').screenshot();

@@ -1,6 +1,6 @@
 export const SHARED_CAMERA_FRAMING_STORAGE_KEY = 'glb-viewer:shared-camera-framing:v1';
 
-const DEFAULT_SHARED_CAMERA_FRAMING = Object.freeze({ theta: 0, phi: 75, fov: 45, verticalShift: 0 });
+const DEFAULT_SHARED_CAMERA_FRAMING = Object.freeze({ theta: 0, phi: 75, fov: 45, verticalShift: 0, buildingCorrection: false });
 const LIMITS = Object.freeze({
   theta: [-180, 180],
   phi: [1, 179],
@@ -22,7 +22,7 @@ export function sanitizeSharedCameraFraming(value) {
     if (!Number.isFinite(numericValue)) return null;
     framing[key] = clamp(numericValue, limits);
   }
-  return framing;
+  return { ...framing, buildingCorrection: Boolean(value.buildingCorrection) };
 }
 
 export function loadSharedCameraFraming(storage = globalThis.localStorage) {

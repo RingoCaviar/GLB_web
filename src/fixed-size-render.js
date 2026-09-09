@@ -18,7 +18,7 @@ export function renderFixedSizeImage(viewer, options) {
         async apply(dimensions) {
           await applyViewerCameraFraming(target, framing, {
             immediate: true,
-            applyProjection: () => applyVerticalLensShift(target, framing.verticalShift, dimensions),
+            applyProjection: () => applyVerticalLensShift(target, framing.verticalShift, dimensions, framing.buildingCorrection),
           });
         },
         async restore() {
@@ -26,7 +26,7 @@ export function renderFixedSizeImage(viewer, options) {
           await target.updateComplete;
           await applyViewerCameraFraming(target, framing, {
             immediate: true,
-            applyProjection: () => applyVerticalLensShift(target, framing.verticalShift),
+            applyProjection: () => applyVerticalLensShift(target, framing.verticalShift, {}, framing.buildingCorrection),
           });
         },
       };
