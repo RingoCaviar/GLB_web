@@ -122,7 +122,7 @@
 ### 渲染工作室与默认光照
 
 1. HDRI 预设同时提供原色和保留亮度的灰度资源；`desaturate` 和背景预览默认开启，预览通过公开 `skyboxImage` 显示当前环境全景。
-2. Vite 启动时自动发现 `public/environments/` 根目录的 `.hdr` 与 `.exr`；`.grayscale.hdr` 作为同名环境的去色资源而非独立选项。EXR 自动转换为 model-viewer 可用的缓存 HDR，所有源文件自动生成全景 WebP，缓存只写入被忽略的 `.generated/`。
+2. Vite 启动时自动发现 `public/environments/` 根目录的 `.hdr` 与 `.exr`；`.grayscale.hdr` 作为同名环境的去色资源而非独立选项。EXR 自动转换为 model-viewer 可用的缓存 HDR，所有源文件按 HDR 解码后的扫描线方向直接生成全景 WebP，不得再次垂直翻转；缓存只写入被忽略的 `.generated/`。
 3. HDRI 通过显示环境图本身的等距柱状全景缩略图卡片切换；中性光以无 HDRI 占位图呈现。选择器支持键盘导航，加载失败时保留上一个成功环境并标记失败卡片。
 4. HDRI 环境旋转按俯仰 X（-180°～180°）、水平 Y（0°～360°）和翻滚 Z（-180°～180°）进入光照状态。固定版本兼容层把三轴同步到环境与普通背景，带地面的天空盒仅跟随 Y，以保持地平线水平；旧 `environmentRotation` 状态兼容为 Y 轴。
 5. 页面启动由模型外观 module 读取 `config/default-lighting.json`。模型没有当前浏览器的模型级外观记录时使用项目默认；已有模型级记录时继续优先恢复该记录；损坏光照回退项目默认但保留可读材质覆盖。

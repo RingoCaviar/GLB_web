@@ -7,7 +7,7 @@ import { RGBELoader } from 'three/examples/jsm/loaders/RGBELoader.js';
 const sourceRoot = resolve(process.cwd(), 'public/environments');
 const cacheRoot = resolve(sourceRoot, '.generated');
 const generatedModule = resolve(process.cwd(), 'src/environment-presets.generated.js');
-const PREVIEW_VERSION = 7;
+const PREVIEW_VERSION = 8;
 const title = (name) => name.replace(/[_-]+/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
 const legacyKeys = { 'studio_small_03_1k.hdr': 'softStudio', 'ferndale_studio_03_1k.hdr': 'rimStudio', 'kloppenheim_01_puresky_1k.hdr': 'outdoor' };
 
@@ -19,7 +19,7 @@ export async function previewFromFloat(data, width, height, output) {
       rgb[index * 3 + channel] = Math.round(255 * ((linear / (1 + linear)) ** (1 / 2.2)));
     }
   }
-  await sharp(rgb, { raw: { width, height, channels: 3 } }).flip().resize({ width: 320 }).webp({ quality: 86 }).toFile(output);
+  await sharp(rgb, { raw: { width, height, channels: 3 } }).resize({ width: 320 }).webp({ quality: 86 }).toFile(output);
 }
 
 async function buildManifest() {

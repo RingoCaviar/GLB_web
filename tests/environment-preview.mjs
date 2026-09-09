@@ -25,12 +25,25 @@ for (const file of await readdir(environmentDirectory)) {
 const directory = await mkdtemp(join(tmpdir(), 'glb-hdri-preview-'));
 try {
   const output = join(directory, 'preview.webp');
-  const data = new Float32Array(400 * 200 * 4).fill(0.5);
+  const data = new Float32Array(400 * 200 * 4);
+  for (let y = 0; y < 200; y += 1) {
+    for (let x = 0; x < 400; x += 1) {
+      const offset = (y * 400 + x) * 4;
+      data[offset + (y < 100 ? 0 : 2)] = 4;
+      data[offset + 3] = 1;
+    }
+  }
   await previewFromFloat(data, 400, 200, output);
-  const metadata = await sharp(await readFile(output)).metadata();
+  const image = sharp(await readFile(output));
+  const metadata = await image.metadata();
 
   assert.equal(metadata.width, 320);
   assert.equal(metadata.height, 160);
+  const { data: pixels, info } = await image.raw().toBuffer({ resolveWithObject: true });
+  const top = (10 * info.width + 160) * info.channels;
+  const bottom = (150 * info.width + 160) * info.channels;
+  assert.ok(pixels[top] > pixels[top + 2], 'HDR 顶部必须保持在预览图顶部');
+  assert.ok(pixels[bottom + 2] > pixels[bottom], 'HDR 底部必须保持在预览图底部');
 
   const css = await readFile(new URL('../src/style.css', import.meta.url), 'utf8');
   assert.match(css, /\.environment-card-preview img\s*\{[^}]*aspect-ratio:\s*2\s*\/\s*1[^}]*object-fit:\s*contain/s);
