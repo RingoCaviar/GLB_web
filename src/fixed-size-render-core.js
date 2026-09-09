@@ -6,6 +6,7 @@ const STYLE_FIELDS = [
 const DEFAULT_TIMEOUT_MS = 30000;
 const STABLE_FRAME_COUNT = 8;
 const BUFFER_CALIBRATION_ATTEMPTS = 3;
+const OUTPUT_CALIBRATION_ATTEMPTS = 3;
 
 export class FixedSizeRenderError extends Error {
   constructor(code, { cause, restorationErrors = [], details = null } = {}) {
@@ -89,6 +90,39 @@ async function calibrateDrawingBuffer(viewer, { width, height, readDrawingBuffer
     drawingBuffer = readDrawingBuffer(viewer);
   }
   return drawingBuffer;
+}
+
+async function captureExactSize(viewer, {
+  width,
+  height,
+  pixelRatio,
+  createBitmap,
+  capture,
+  waitUntilStable,
+}) {
+  let dimensions = null;
+  for (let attempt = 0; attempt < OUTPUT_CALIBRATION_ATTEMPTS; attempt++) {
+    const blob = await capture();
+    if (!blob || blob.size === 0) throw new FixedSizeRenderError('EMPTY_RENDER');
+    dimensions = await imageDimensions(blob, createBitmap);
+    if (dimensions.width === width && dimensions.height === height) {
+      return { blob, dimensions };
+    }
+    const widthDifference = width - dimensions.width;
+    const heightDifference = height - dimensions.height;
+    const centeredWidthCorrection = widthDifference === 0
+      ? 0
+      : widthDifference - Math.sign(widthDifference) * 0.5;
+    const centeredHeightCorrection = heightDifference === 0
+      ? 0
+      : heightDifference - Math.sign(heightDifference) * 0.5;
+    viewer.style.width = `${Number.parseFloat(viewer.style.width) + centeredWidthCorrection / pixelRatio}px`;
+    viewer.style.height = `${Number.parseFloat(viewer.style.height) + centeredHeightCorrection / pixelRatio}px`;
+    await waitUntilStable();
+  }
+  throw new FixedSizeRenderError('RENDER_SIZE_MISMATCH', {
+    details: { requestedWidth: width, requestedHeight: height, ...dimensions },
+  });
 }
 
 export async function renderFixedSizeImage(viewer, {
@@ -189,22 +223,23 @@ export async function renderFixedSizeImage(viewer, {
       readDrawingBuffer: runtime.readDrawingBuffer,
       waitUntilStable,
     });
-    if (drawingBuffer && (drawingBuffer.width !== width || drawingBuffer.height !== height)) {
+    if (drawingBuffer && (drawingBuffer.width < width - 1 || drawingBuffer.height < height - 1)) {
       throw new FixedSizeRenderError('RENDER_BUFFER_TOO_SMALL', {
         details: { requestedWidth: width, requestedHeight: height, ...drawingBuffer },
       });
     }
 
-    const blob = await withDeadline(Promise.resolve(viewer.toBlob({ idealAspect: false, mimeType: 'image/png' })), {
-      signal, timeoutMs, setTimer, clearTimer,
+    const { blob, dimensions } = await captureExactSize(viewer, {
+      width,
+      height,
+      pixelRatio,
+      createBitmap,
+      waitUntilStable,
+      capture: () => withDeadline(
+        Promise.resolve(viewer.toBlob({ idealAspect: false, mimeType: 'image/png' })),
+        { signal, timeoutMs, setTimer, clearTimer },
+      ),
     });
-    if (!blob || blob.size === 0) throw new FixedSizeRenderError('EMPTY_RENDER');
-    const dimensions = await withDeadline(imageDimensions(blob, createBitmap), {
-      signal, timeoutMs, setTimer, clearTimer,
-    });
-    if (dimensions.width !== width || dimensions.height !== height) {
-      throw new FixedSizeRenderError('RENDER_SIZE_MISMATCH');
-    }
     return {
       blob,
       width: dimensions.width,

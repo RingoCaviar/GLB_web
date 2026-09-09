@@ -81,6 +81,32 @@ for (const effectiveScale of [0.5, 0.8, 1.25, 1.5, 2]) {
   assert.deepEqual(item.viewer.style, originalStyle, `${effectiveScale}× 缩放后应恢复预览样式`);
 }
 
+for (const [pixelRatio, width, height] of [
+  [1, 640, 480],
+  [1.25, 641, 481],
+  [1.5, 640, 480],
+  [1.5, 641, 481],
+  [2, 1920, 1080],
+]) {
+  const item = fixture();
+  const layoutPixels = (value) => Math.round(Number.parseFloat(value) * 64) / 64;
+  item.runtime.pixelRatio = pixelRatio;
+  item.runtime.readDrawingBuffer = () => ({
+    width: Math.ceil(layoutPixels(item.viewer.style.width) * pixelRatio),
+    height: Math.ceil(layoutPixels(item.viewer.style.height) * pixelRatio),
+  });
+  item.runtime.createBitmap = async () => ({
+    width: Math.floor(layoutPixels(item.viewer.style.width) * pixelRatio),
+    height: Math.floor(layoutPixels(item.viewer.style.height) * pixelRatio),
+  });
+  const result = await renderFixedSizeImage(item.viewer, { width, height }, item.runtime);
+  assert.deepEqual(
+    { width: result.width, height: result.height },
+    { width, height },
+    `${pixelRatio}× DPR 下应生成精确的固定尺寸图像`,
+  );
+}
+
 {
   const { viewer, runtime, calls } = fixture();
   let appliedFraming;

@@ -24,6 +24,7 @@
     "test:environment-preprocess": "node tests/environment-preprocess.mjs",
     "test:lighting": "node tests/lighting-default-middleware.mjs",
     "test:fixed-render": "node tests/fixed-size-render.mjs",
+    "test:fixed-render-browser": "node tests/fixed-size-render-browser.mjs",
     "test:model-loading": "node tests/model-loading.mjs",
     "test:model-appearance": "node tests/model-appearance.mjs",
     "test:export": "node tests/png-export.mjs",
