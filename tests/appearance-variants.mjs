@@ -3,6 +3,7 @@ import {
   APPEARANCE_ORIGINAL_VALUE,
   appearanceVariantTemplate,
   appearanceOptions,
+  resetAppearanceVariant,
   selectAppearanceVariant,
 } from '../src/appearance-variants.js';
 
@@ -17,6 +18,9 @@ const viewer = { availableVariants: ['医疗蓝', '经典白'], variantName: nul
 assert.equal(selectAppearanceVariant(viewer, '医疗蓝'), true);
 assert.equal(viewer.variantName, '医疗蓝');
 assert.equal(selectAppearanceVariant(viewer, APPEARANCE_ORIGINAL_VALUE), true);
+assert.equal(viewer.variantName, null);
+viewer.variantName = '医疗蓝';
+resetAppearanceVariant(viewer);
 assert.equal(viewer.variantName, null);
 assert.equal(selectAppearanceVariant(viewer, '不存在'), false);
 assert.equal(viewer.variantName, null);

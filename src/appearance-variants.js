@@ -22,6 +22,10 @@ export function selectAppearanceVariant(viewer, value) {
   return true;
 }
 
+export function resetAppearanceVariant(viewer) {
+  viewer.variantName = null;
+}
+
 export function appearanceVariantTemplate() {
   return `<section class="appearance-variant-section" id="appearanceVariants" hidden>
     <div class="appearance-variant-label"><strong>外观</strong><small id="appearanceVariantCount"></small></div>
@@ -57,6 +61,7 @@ export class AppearanceVariantSelector {
   }
 
   loadModel(model) {
+    resetAppearanceVariant(this.viewer);
     this.options = appearanceOptions(this.viewer.availableVariants ?? []);
     this.currentValue = APPEARANCE_ORIGINAL_VALUE;
     this.thumbnails = new Map([[APPEARANCE_ORIGINAL_VALUE, model?.thumbnailUrl ?? null]]);
@@ -68,6 +73,7 @@ export class AppearanceVariantSelector {
   }
 
   unloadModel() {
+    resetAppearanceVariant(this.viewer);
     this.options = [];
     this.currentValue = APPEARANCE_ORIGINAL_VALUE;
     this.thumbnails.clear();
