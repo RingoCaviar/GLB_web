@@ -869,6 +869,7 @@ async function cancelFixedSizeRender() {
 
 async function prepareLoadedModel(model) {
   state.loaded = true;
+  await Promise.all((viewer.model?.materials ?? []).map((material) => material.ensureLoaded()));
   await viewer.updateFraming();
   await applyViewerCameraFraming(viewer, { ...state, radius: 'auto' }, { immediate: true });
   modelBounds = createBounds(viewer.getBoundingBoxCenter(), viewer.getDimensions());
