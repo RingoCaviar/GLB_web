@@ -19,6 +19,7 @@
     "test:thumbnail-camera": "node tests/thumbnail-camera-framing.mjs",
     "test:sequence": "node tests/sequence-previews.mjs",
     "test:studio": "node tests/render-studio.mjs",
+    "test:appearance-variants": "node tests/appearance-variants.mjs",
     "test:studio-parameters": "node tests/render-studio-parameters.mjs",
     "test:environment-preview": "node tests/environment-preview.mjs",
     "test:environment-preprocess": "node tests/environment-preprocess.mjs",

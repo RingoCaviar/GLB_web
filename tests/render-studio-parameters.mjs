@@ -12,12 +12,12 @@ assert.equal(clampStudioParameter(exposure, 99, 1), 3);
 assert.equal(clampStudioParameter(exposure, 'bad', 1), 1);
 assert.equal(formatStudioParameter(exposure, 1.5), '1.50');
 assert.equal(studioParameters('rotation').length, 3);
-assert.deepEqual(studioNumericParameters('lighting').map(({ key }) => key), ['exposure', 'shadowIntensity', 'shadowSoftness', 'normalStrength']);
-assert.deepEqual(studioNumericParameters('material-basic').map(({ key }) => key), ['metallic', 'roughness', 'emissiveStrength']);
-const baseline = { exposure: 1, shadowIntensity: 0.75, shadowSoftness: 0.9, normalStrength: 1 };
-const current = { ...baseline, exposure: 1.5, normalStrength: 0.8 };
+assert.deepEqual(studioNumericParameters('lighting').map(({ key }) => key), ['exposure', 'shadowIntensity', 'shadowSoftness']);
+assert.deepEqual(studioNumericParameters('material-basic').map(({ key }) => key), ['metallic', 'roughness', 'normalStrength', 'emissiveStrength']);
+const baseline = { exposure: 1, shadowIntensity: 0.75, shadowSoftness: 0.9 };
+const current = { ...baseline, exposure: 1.5 };
 assert.equal(isStudioParameterChanged(current, baseline, exposure), true);
-assert.equal(countChangedStudioParameters(current, baseline, 'lighting'), 2);
+assert.equal(countChangedStudioParameters(current, baseline, 'lighting'), 1);
 
 for (const id of ['environmentPreset', 'environmentDesaturate', 'environmentPreview', 'toneMapping']) {
   assert.ok(studioParameter(id), `${id} must be defined by the parameter module`);

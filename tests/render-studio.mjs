@@ -2,12 +2,13 @@ import assert from 'node:assert/strict';
 import {
   applyEnvironmentRotation,
   applyLighting,
-  applyNormalStrength,
+  applyMaterialNormalStrength,
   applyMaterial,
   clearStudioState,
   DEFAULT_LIGHTING,
   getMaterialTextureChannels,
   loadStudioState,
+  readMaterial,
   sanitizeLighting,
   saveStudioState,
   shouldWaitForEnvironmentChange,
@@ -31,17 +32,15 @@ assert.deepEqual(sanitizeLighting({ exposure: 99, shadowIntensity: -2, shadowSof
 assert.equal(sanitizeLighting({ environmentRotation: 999 }).environmentRotationY, 360);
 assert.equal(sanitizeLighting({ environmentRotationX: -999 }).environmentRotationX, -180);
 assert.equal(sanitizeLighting({ environmentRotationZ: 999 }).environmentRotationZ, 180);
-assert.equal(sanitizeLighting({ normalStrength: -1 }).normalStrength, 0);
-assert.equal(sanitizeLighting({ normalStrength: 99 }).normalStrength, 2);
-assert.equal(sanitizeLighting({ normalStrength: 'bad' }).normalStrength, 1);
+assert.equal(Object.hasOwn(sanitizeLighting({ normalStrength: 1.7 }), 'normalStrength'), false);
 
 assert.equal(saveStudioState('model.glb', {
   version: STUDIO_STATE_VERSION,
-  lighting: { preset: 'outdoor', exposure: 1.4, toneMapping: 'agx' },
+  lighting: { preset: 'brown_photostudio_02_2k', exposure: 1.4, toneMapping: 'agx' },
   materialsByIndex: { 0: { metallic: 0.8 }, invalid: { roughness: 1 } },
 }, localStorage), true);
 const restored = loadStudioState('model.glb', localStorage);
-assert.equal(restored.lighting.preset, 'outdoor');
+assert.equal(restored.lighting.preset, 'brown_photostudio_02_2k');
 assert.equal(restored.lighting.exposure, 1.4);
 assert.equal(restored.lighting.toneMapping, 'agx');
 assert.deepEqual(restored.materialsByIndex, { 0: { metallic: 0.8 } });
@@ -104,16 +103,16 @@ const viewer = {};
 applyLighting(viewer, { preset: 'neutral', exposure: 2, shadowIntensity: 1.2, shadowSoftness: 0.4, toneMapping: 'aces' });
 assert.deepEqual(viewer, { environmentImage: 'neutral', skyboxImage: null, exposure: 2, shadowIntensity: 1.2, shadowSoftness: 0.4, toneMapping: 'aces' });
 
-applyLighting(viewer, { preset: 'outdoor', desaturate: true });
-assert.equal(viewer.environmentImage, '/environments/kloppenheim_01_puresky_1k.grayscale.hdr');
+applyLighting(viewer, { preset: 'brown_photostudio_02_2k', desaturate: true });
+assert.equal(viewer.environmentImage, '/environments/brown_photostudio_02_2k.grayscale.hdr');
 assert.equal(viewer.skyboxImage, viewer.environmentImage);
-applyLighting(viewer, { preset: 'outdoor', desaturate: false });
-assert.equal(viewer.environmentImage, '/environments/kloppenheim_01_puresky_1k.hdr');
-applyLighting(viewer, { preset: 'outdoor', showEnvironment: false });
+applyLighting(viewer, { preset: 'brown_photostudio_02_2k', desaturate: false });
+assert.equal(viewer.environmentImage, '/environments/brown_photostudio_02_2k.hdr');
+applyLighting(viewer, { preset: 'brown_photostudio_02_2k', showEnvironment: false });
 assert.equal(viewer.skyboxImage, null);
-applyLighting(viewer, { preset: 'environment-b757715cb78d', desaturate: true });
+applyLighting(viewer, { preset: 'skylit_garage_2k', desaturate: true });
 const grayscaleEnvironment = viewer.environmentImage;
-applyLighting(viewer, { preset: 'environment-b757715cb78d', desaturate: false });
+applyLighting(viewer, { preset: 'skylit_garage_2k', desaturate: false });
 assert.notEqual(viewer.environmentImage, grayscaleEnvironment);
 
 assert.equal(shouldWaitForEnvironmentChange({ src: null }, { url: '/environments/example.hdr' }), false);
@@ -136,10 +135,19 @@ const normalScaleForTest = { x: 0.75, y: 1, set(x, y) { this.x = x; this.y = y; 
 const normalTextureForTest = { texture: {} };
 const normalMaterialForTest = { normalTexture: normalTextureForTest, [correlatedObjects]: new Set([{ normalScale: normalScaleForTest }]) };
 const normalScalesForTest = new WeakMap();
-assert.equal(applyNormalStrength([normalMaterialForTest, {}], 2, normalScalesForTest), 2);
+assert.equal(applyMaterialNormalStrength(normalMaterialForTest, 2, normalScalesForTest), 2);
 assert.equal(normalScaleForTest.x, 1.5);
-assert.equal(applyNormalStrength([normalMaterialForTest], 0, normalScalesForTest), 0);
+assert.equal(applyMaterialNormalStrength(normalMaterialForTest, 0, normalScalesForTest), 0);
 assert.equal(normalScaleForTest.x, 0);
+assert.equal(applyMaterialNormalStrength({}, 1, normalScalesForTest), null);
+const normalMaterialStateForTest = {
+  ...normalMaterialForTest,
+  pbrMetallicRoughness: { baseColorFactor: [1, 1, 1, 1], metallicFactor: 0, roughnessFactor: 1 },
+  emissiveFactor: [0, 0, 0], emissiveStrength: 1,
+  getDoubleSided: () => false, getAlphaMode: () => 'OPAQUE',
+};
+const normalStrengthsForTest = new WeakMap([[normalMaterialStateForTest, 0.6]]);
+assert.equal(readMaterial(normalMaterialStateForTest, normalStrengthsForTest).normalStrength, 0.6);
 assert.equal(applyEnvironmentRotation(rotatedViewer, { environmentRotationX: -45, environmentRotationY: 90, environmentRotationZ: 30 }), true);
 assert.equal(rotatedViewer[sceneSymbol].environmentRotation.x, -Math.PI / 4);
 assert.equal(rotatedViewer[sceneSymbol].environmentRotation.y, Math.PI / 2);

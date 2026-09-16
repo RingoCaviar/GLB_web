@@ -6,7 +6,7 @@ export const STUDIO_STORAGE_PREFIX = 'glb-viewer:studio:v1:';
 export const DEFAULT_LIGHTING = Object.freeze({
   preset: 'neutral', exposure: 1, shadowIntensity: 0.75, shadowSoftness: 0.9,
   toneMapping: 'neutral', desaturate: true, showEnvironment: true,
-  environmentRotationX: 0, environmentRotationY: 0, environmentRotationZ: 0, normalStrength: 1,
+  environmentRotationX: 0, environmentRotationY: 0, environmentRotationZ: 0,
 });
 
 const validPresets = new Set(environmentPresetList.map(({ key }) => key));
@@ -28,7 +28,6 @@ export function sanitizeLighting(value = {}) {
     environmentRotationX: clamp(value.environmentRotationX, -180, 180, DEFAULT_LIGHTING.environmentRotationX),
     environmentRotationY: clamp(value.environmentRotationY ?? value.environmentRotation, 0, 360, DEFAULT_LIGHTING.environmentRotationY),
     environmentRotationZ: clamp(value.environmentRotationZ, -180, 180, DEFAULT_LIGHTING.environmentRotationZ),
-    normalStrength: clamp(value.normalStrength, 0, 2, DEFAULT_LIGHTING.normalStrength),
   };
 }
 
@@ -36,7 +35,7 @@ function isUsableSavedLighting(value) {
   if (!value || typeof value !== 'object') return false;
   if (Object.hasOwn(value, 'preset') && !validPresets.has(value.preset)) return false;
   if (Object.hasOwn(value, 'toneMapping') && !toneMappings.has(value.toneMapping)) return false;
-  for (const key of ['exposure', 'shadowIntensity', 'shadowSoftness', 'environmentRotationX', 'environmentRotationY', 'environmentRotationZ', 'environmentRotation', 'normalStrength']) {
+  for (const key of ['exposure', 'shadowIntensity', 'shadowSoftness', 'environmentRotationX', 'environmentRotationY', 'environmentRotationZ', 'environmentRotation']) {
     if (Object.hasOwn(value, key) && !Number.isFinite(Number(value[key]))) return false;
   }
   return !((Object.hasOwn(value, 'desaturate') && typeof value.desaturate !== 'boolean')

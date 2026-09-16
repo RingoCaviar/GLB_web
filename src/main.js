@@ -43,6 +43,7 @@ import {
 import { hasRenderRestorationFailure, renderFixedSizeImage } from './fixed-size-render.js';
 import { ModelLoadingModule } from './model-loading.js';
 import { ModelViewerLoadingAdapter } from './model-viewer-loading-adapter.js';
+import { AppearanceVariantSelector, appearanceVariantTemplate } from './appearance-variants.js';
 import { readExportDimensionCapability } from './webgl-capabilities.js';
 import { loadSharedCameraFraming, saveSharedCameraFraming } from './shared-camera-framing.js';
 import { applyBuildingCorrection, applyViewerCameraFraming } from './camera-framing-application.js';
@@ -228,6 +229,8 @@ document.querySelector('#app').innerHTML = `
         <p class="message" id="message" aria-live="polite"></p>
       </section>
 
+      ${appearanceVariantTemplate()}
+
       <section class="panel-section">
         <div class="section-heading"><span>02</span><h2>相机</h2></div>
         ${controlTemplate('水平旋转', 'theta', -180, 180, 1, '°')}
@@ -338,6 +341,7 @@ const generateThumbnailButton = document.querySelector('#generateThumbnail');
 const generateSequenceCacheButton = document.querySelector('#generateSequenceCache');
 const contextMenuHint = document.querySelector('#contextMenuHint');
 const renderStudio = new RenderStudio(viewer, document.querySelector('#renderStudio'), { onMessage: showMessage });
+const appearanceVariantSelector = new AppearanceVariantSelector(viewer, document.querySelector('#appearanceVariants'));
 const sequenceRoot = document.querySelector('#sequenceViewer');
 const sequenceViewer = new SequenceViewer(sequenceRoot);
 // Keep the fixed-position menu outside the filtered/clipped library overlay.
@@ -837,6 +841,7 @@ async function resetModelRuntime() {
   cameraSyncSequence++;
   resetTextureQuality(viewer);
   renderStudio.unloadModel();
+  appearanceVariantSelector.unloadModel();
   viewer.cameraTarget = 'auto auto auto';
   await applyViewerCameraFraming(viewer, { ...state, radius: 'auto' }, {
     applyProjection: applyLensProjection,
@@ -877,6 +882,7 @@ async function prepareLoadedModel(model) {
   const shiftCapability = verticalLensShiftCapability(viewer);
   state.renderQuality = { ...state.renderQuality, ...applyMaximumTextureQuality(viewer) };
   await renderStudio.loadModel(model.id);
+  appearanceVariantSelector.loadModel(model);
   setStatus(model.name, 'ready');
   setCameraControlsDisabled(false);
   setVerticalShiftAvailable(shiftCapability.available);

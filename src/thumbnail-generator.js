@@ -73,9 +73,11 @@ export async function createModelThumbnail(modelUrl, appearance = null, sharedCa
     document.body.append(viewer);
     viewer.src = modelUrl;
     await loaded;
+    const originalNormalScales = new WeakMap();
+    const normalStrengths = new WeakMap();
     for (const [index, materialState] of Object.entries(appearance?.materialsByIndex ?? {})) {
       const material = viewer.model?.materials?.[Number(index)];
-      if (material) applyMaterial(material, materialState);
+      if (material) applyMaterial(material, materialState, { originalNormalScales, normalStrengths, viewer });
     }
     await viewer.updateFraming();
     viewer.jumpCameraToGoal();

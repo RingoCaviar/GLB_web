@@ -26,18 +26,15 @@ function getCorrelatedMaterials(material) {
   return correlated instanceof Set ? correlated : [];
 }
 
-export function applyNormalStrength(materials = [], strength = 1, originalScales = new WeakMap(), viewer = null) {
-  const safeStrength = clamp(strength, 0, 2, DEFAULT_LIGHTING.normalStrength);
-  for (const material of materials) {
-    const textureInfo = material?.normalTexture;
-    if (!textureInfo?.texture) continue;
-    for (const threeMaterial of getCorrelatedMaterials(material)) {
-      if (!threeMaterial?.normalScale?.set) continue;
-      if (!originalScales.has(threeMaterial)) originalScales.set(threeMaterial, { x: threeMaterial.normalScale.x, y: threeMaterial.normalScale.y });
-      const original = originalScales.get(threeMaterial);
-      threeMaterial.normalScale.set(original.x * safeStrength, original.y * safeStrength);
-      threeMaterial.needsUpdate = true;
-    }
+export function applyMaterialNormalStrength(material, strength = 1, originalScales = new WeakMap(), viewer = null) {
+  const safeStrength = clamp(strength, 0, 2, 1);
+  if (!material?.normalTexture?.texture) return null;
+  for (const threeMaterial of getCorrelatedMaterials(material)) {
+    if (!threeMaterial?.normalScale?.set) continue;
+    if (!originalScales.has(threeMaterial)) originalScales.set(threeMaterial, { x: threeMaterial.normalScale.x, y: threeMaterial.normalScale.y });
+    const original = originalScales.get(threeMaterial);
+    threeMaterial.normalScale.set(original.x * safeStrength, original.y * safeStrength);
+    threeMaterial.needsUpdate = true;
   }
   const sceneSymbol = viewer && Object.getOwnPropertySymbols(viewer).find((symbol) => symbol.description === 'scene');
   viewer?.[sceneSymbol]?.queueRender?.();
@@ -79,7 +76,7 @@ export function getMaterialTextureChannels(material) {
   return [...core, ...advanced];
 }
 
-export function readMaterial(material) {
+export function readMaterial(material, normalStrengths = new WeakMap()) {
   const pbr = material.pbrMetallicRoughness;
   return {
     baseColor: copy(pbr.baseColorFactor), metallic: pbr.metallicFactor, roughness: pbr.roughnessFactor,
@@ -89,10 +86,11 @@ export function readMaterial(material) {
     transmission: material.transmissionFactor, ior: material.ior, thickness: material.thicknessFactor,
     specular: material.specularFactor, iridescence: material.iridescenceFactor,
     anisotropy: material.anisotropyStrength,
+    ...(material.normalTexture?.texture ? { normalStrength: normalStrengths.get(material) ?? 1 } : {}),
   };
 }
 
-export function applyMaterial(material, value = {}) {
+export function applyMaterial(material, value = {}, { originalNormalScales, normalStrengths, viewer } = {}) {
   const pbr = material.pbrMetallicRoughness;
   if (Array.isArray(value.baseColor) && value.baseColor.length === 4) pbr.setBaseColorFactor(value.baseColor);
   if (Number.isFinite(value.metallic)) pbr.setMetallicFactor(clamp(value.metallic, 0, 1, pbr.metallicFactor));
@@ -109,6 +107,10 @@ export function applyMaterial(material, value = {}) {
   }
   if (typeof value.doubleSided === 'boolean') material.setDoubleSided(value.doubleSided);
   if (['OPAQUE', 'MASK', 'BLEND'].includes(value.alphaMode)) material.setAlphaMode(value.alphaMode);
+  if (Number.isFinite(value.normalStrength) && originalNormalScales) {
+    const applied = applyMaterialNormalStrength(material, value.normalStrength, originalNormalScales, viewer);
+    if (applied !== null) normalStrengths?.set(material, applied);
+  }
 }
 
 export function applyLighting(viewer, lighting) {
@@ -156,18 +158,24 @@ export function applyEnvironmentRotation(viewer, rotation = {}) {
 export function studioPanelTemplate() {
   return `<section class="panel-section studio-section" id="renderStudio">
     <div class="section-heading"><span>04</span><h2>渲染工作室</h2></div>
-    <div class="environment-picker"><button class="environment-picker-toggle" id="environmentPickerToggle" type="button" aria-haspopup="dialog"><span><strong>环境光</strong><small id="environmentStatus">项目内置 HDR</small></span><span class="environment-current" id="environmentCurrent"></span></button><dialog class="environment-dialog" id="environmentDialog"><div class="environment-dialog-heading"><div><strong>选择 HDRI 环境</strong><small>完整预览环境全景 · 点击立即应用</small></div><button id="environmentDialogClose" type="button" aria-label="关闭 HDRI 选择窗口">×</button></div><div class="environment-grid" id="environmentPresetGrid">${Object.entries(ENVIRONMENT_PRESETS).map(([key, item]) => `<button class="environment-card" type="button" data-environment-preset="${key}" aria-pressed="false"><span class="environment-card-preview"><img src="${item.thumbnailUrl}" alt="${key === 'neutral' ? '无 HDRI' : `${item.label} HDRI 全景预览`}" width="320">${key === 'neutral' ? '<i>无 HDRI</i>' : ''}</span><span>${item.label}</span><small>点击应用</small></button>`).join('')}</div></dialog></div>
-    <label class="switch-row compact-switch"><span><strong>HDRI 去色</strong><small>保留明暗，移除环境色偏</small></span><input id="environmentDesaturate" type="checkbox" checked><i></i></label>
-    <label class="switch-row compact-switch"><span><strong>预览 HDRI 背景</strong><small>仅用于取景预览，不改变 PNG 背景</small></span><input id="environmentPreview" type="checkbox" checked><i></i></label>
-    <section class="parameter-group"><div class="parameter-group-heading"><strong>基础光照</strong><small data-adjusted-count="lighting">已调整 0 项</small></div><div id="lightingControls"></div></section>
-    <details class="parameter-group collapsible-parameter-group"><summary>三轴环境旋转 <small data-adjusted-count="rotation">已调整 0 项</small></summary><div id="environmentRotationControl"></div></details>
-    <label class="select-row"><span><strong>色调映射</strong></span><select id="toneMapping"><option value="neutral">Neutral</option><option value="aces">ACES</option><option value="agx">AgX</option><option value="commerce">Commerce</option></select></label>
-    <div class="studio-actions lighting-actions"><button class="secondary-button" id="resetLighting" type="button">重置光照</button><button class="secondary-button" id="saveDefaultLighting" type="button" disabled>保存为默认</button></div>
-    <div class="studio-divider"></div>
-    <label class="select-row"><span><strong>材质</strong><small id="materialCount">请先加载模型</small></span><select id="materialSelect" disabled></select></label>
-    <div id="materialControls" class="material-controls"></div>
-    <div class="studio-actions"><button class="secondary-button" id="resetMaterial" type="button" disabled>重置当前材质</button><button class="secondary-button" id="resetAllMaterials" type="button" disabled>重置全部材质</button></div>
-    <button class="secondary-button danger-button" id="resetModelAppearance" type="button" disabled>恢复模型默认效果</button>
+    <section class="studio-area" aria-labelledby="lightingAreaTitle"><div class="studio-area-heading"><h3 id="lightingAreaTitle">环境与光照</h3><small>设置场景氛围与画面表现</small></div>
+      <div class="studio-subheading">环境</div>
+      <div class="environment-picker"><button class="environment-picker-toggle" id="environmentPickerToggle" type="button" aria-haspopup="dialog"><span><strong>HDRI 环境</strong><small id="environmentStatus">项目内置 HDR</small></span><span class="environment-current" id="environmentCurrent"></span></button><dialog class="environment-dialog" id="environmentDialog"><div class="environment-dialog-heading"><div><strong>选择 HDRI 环境</strong><small>完整预览环境全景 · 点击立即应用</small></div><button id="environmentDialogClose" type="button" aria-label="关闭 HDRI 选择窗口">×</button></div><div class="environment-grid" id="environmentPresetGrid">${Object.entries(ENVIRONMENT_PRESETS).map(([key, item]) => `<button class="environment-card" type="button" data-environment-preset="${key}" aria-pressed="false"><span class="environment-card-preview"><img src="${item.thumbnailUrl}" alt="${key === 'neutral' ? '无 HDRI' : `${item.label} HDRI 全景预览`}" width="320">${key === 'neutral' ? '<i>无 HDRI</i>' : ''}</span><span>${item.label}</span><small>点击应用</small></button>`).join('')}</div></dialog></div>
+      <label class="switch-row compact-switch"><span><strong>HDRI 去色</strong><small>保留明暗，减少环境色偏</small></span><input id="environmentDesaturate" type="checkbox" checked><i></i></label>
+      <label class="switch-row compact-switch"><span><strong>显示环境背景</strong><small>仅影响预览，不进入 PNG</small></span><input id="environmentPreview" type="checkbox" checked><i></i></label>
+      <section class="parameter-group"><div class="parameter-group-heading"><strong>照明</strong><small data-adjusted-count="lighting">已调整 0 项</small></div><div id="lightingControls"></div></section>
+      <details class="parameter-group collapsible-parameter-group"><summary>环境方向 <small data-adjusted-count="rotation">已调整 0 项</small></summary><div id="environmentRotationControl"></div></details>
+      <div class="studio-subheading">画面处理</div>
+      <label class="select-row"><span><strong>色调映射</strong><small>调整高光与整体明暗表现</small></span><select id="toneMapping"><option value="neutral">Neutral</option><option value="aces">ACES</option><option value="agx">AgX</option><option value="commerce">Commerce</option></select></label>
+      <div class="studio-actions lighting-actions"><button class="secondary-button" id="resetLighting" type="button">重置环境与光照</button><button class="secondary-button" id="saveDefaultLighting" type="button" disabled>保存为默认</button></div>
+    </section>
+    <section class="studio-area material-area" aria-labelledby="materialAreaTitle"><div class="studio-area-heading"><h3 id="materialAreaTitle">材质效果</h3><small>调整模型表面的颜色与质感</small></div>
+      <label class="select-row material-picker"><span><strong>当前材质</strong><small id="materialCount">请先加载模型</small></span><select id="materialSelect" disabled></select></label>
+      <p class="material-scope-help">下方参数仅影响所选材质</p>
+      <div id="materialControls" class="material-controls"></div>
+      <div class="studio-actions material-actions"><button class="secondary-button" id="resetMaterial" type="button" disabled>重置当前材质</button><button class="secondary-button" id="resetAllMaterials" type="button" disabled>重置全部材质</button></div>
+    </section>
+    <button class="secondary-button danger-button" id="resetModelAppearance" type="button" disabled>恢复全部模型效果</button>
   </section>`;
 }
 
@@ -194,6 +202,7 @@ export class RenderStudio {
     this.defaultLighting = { ...DEFAULT_LIGHTING };
     this.defaultLightingWritable = false;
     this.originalNormalScales = new WeakMap();
+    this.materialNormalStrengths = new WeakMap();
     this.persistWriter = createCoalescedWriter(
       ({ modelId, snapshot }) => saveStudioState(modelId, snapshot),
       200,
@@ -210,7 +219,7 @@ export class RenderStudio {
   }
 
   bindLighting() {
-    for (const parameter of [...studioNumericParameters('lighting'), ...studioNumericParameters('rotation')]) this.bindLightingParameter(parameter);
+    for (const parameter of this.globalAppearanceParameters()) this.bindLightingParameter(parameter);
     this.root.querySelector('#toneMapping').addEventListener('change', (event) => {
       this.lighting.toneMapping = event.target.value;
       this.viewer.toneMapping = event.target.value;
@@ -249,7 +258,6 @@ export class RenderStudio {
     this.root.querySelector('#resetLighting').addEventListener('click', () => {
       this.lighting = { ...this.defaultLighting };
       applyLighting(this.viewer, this.lighting);
-      applyNormalStrength(this.materials, this.lighting.normalStrength, this.originalNormalScales, this.viewer);
       this.syncLightingUI();
       this.persist();
     });
@@ -264,8 +272,7 @@ export class RenderStudio {
       this.lighting[parameter.key] = value;
       range.value = value;
       number.value = formatStudioParameter(parameter, value);
-      if (parameter.key === 'normalStrength') applyNormalStrength(this.materials, value, this.originalNormalScales, this.viewer);
-      else if (parameter.group === 'rotation') applyEnvironmentRotation(this.viewer, this.lighting);
+      if (parameter.group === 'rotation') applyEnvironmentRotation(this.viewer, this.lighting);
       else this.viewer[parameter.key] = value;
       this.persist();
       this.updateResetButtons();
@@ -276,11 +283,15 @@ export class RenderStudio {
     this.root.querySelector(`[data-reset="${parameter.id}"]`).addEventListener('click', () => this.resetLightingParameter(parameter.key));
   }
 
+  globalAppearanceParameters(kind = 'number') {
+    const groups = ['lighting', 'rotation'];
+    return groups.flatMap((group) => kind === 'number' ? studioNumericParameters(group) : studioParameters(group));
+  }
+
   resetLightingParameter(key) {
-    const parameter = [...studioParameters('lighting'), ...studioParameters('rotation')].find((item) => item.key === key);
+    const parameter = this.globalAppearanceParameters('all').find((item) => item.key === key);
     this.lighting = resetStudioParameter(this.lighting, this.defaultLighting, parameter);
-    if (key === 'normalStrength') applyNormalStrength(this.materials, this.lighting[key], this.originalNormalScales, this.viewer);
-    else applyLighting(this.viewer, this.lighting);
+    applyLighting(this.viewer, this.lighting);
     this.syncLightingUI();
     this.persist();
   }
@@ -339,7 +350,6 @@ export class RenderStudio {
       this.root.querySelector(`[data-environment-preset="${this.lighting.preset}"]`)?.classList.add('error');
       this.lighting = previousLighting;
       applyLighting(this.viewer, this.lighting);
-      applyNormalStrength(this.materials, this.lighting.normalStrength, this.originalNormalScales, this.viewer);
       this.syncLightingUI();
       status.textContent = '环境加载失败，已保留上一个环境';
       this.onMessage('环境贴图加载失败，已保留上一个可用环境。', 'error');
@@ -359,7 +369,7 @@ export class RenderStudio {
     this.root.querySelector('#toneMapping').value = this.lighting.toneMapping;
     this.root.querySelector('#environmentDesaturate').checked = this.lighting.desaturate;
     this.root.querySelector('#environmentPreview').checked = this.lighting.showEnvironment;
-    for (const parameter of [...studioNumericParameters('lighting'), ...studioNumericParameters('rotation')]) {
+    for (const parameter of this.globalAppearanceParameters()) {
       const value = this.lighting[parameter.key];
       this.root.querySelector(`#${parameter.id}`).value = value;
       this.root.querySelector(`[data-number="${parameter.id}"]`).value = formatStudioParameter(parameter, value);
@@ -368,7 +378,7 @@ export class RenderStudio {
   }
 
   updateResetButtons() {
-    for (const parameter of [...studioParameters('lighting'), ...studioParameters('rotation')]) {
+    for (const parameter of this.globalAppearanceParameters('all')) {
       const button = this.root.querySelector(`[data-reset="${parameter.id}"]`);
       if (button) button.disabled = this.lighting[parameter.key] === this.defaultLighting[parameter.key];
     }
@@ -394,15 +404,18 @@ export class RenderStudio {
     this.modelId = modelId;
     this.materials = [...(this.viewer.model?.materials ?? [])];
     this.originalNormalScales = new WeakMap();
-    applyNormalStrength(this.materials, 1, this.originalNormalScales, this.viewer);
-    this.originalMaterials = this.materials.map(readMaterial);
+    this.materialNormalStrengths = new WeakMap();
+    for (const material of this.materials) {
+      applyMaterialNormalStrength(material, 1, this.originalNormalScales, this.viewer);
+      if (material.normalTexture?.texture) this.materialNormalStrengths.set(material, 1);
+    }
+    this.originalMaterials = this.materials.map((material) => readMaterial(material, this.materialNormalStrengths));
     this.lighting = sanitizeLighting(appearance.lighting);
     this.materialsByIndex = appearance.materialsByIndex;
     applyLighting(this.viewer, this.lighting);
-    applyNormalStrength(this.materials, this.lighting.normalStrength, this.originalNormalScales, this.viewer);
     this.syncLightingUI();
     this.materials.forEach((material, index) => {
-      if (this.materialsByIndex[index]) applyMaterial(material, this.materialsByIndex[index]);
+      if (this.materialsByIndex[index]) applyMaterial(material, this.materialsByIndex[index], this.materialApplyOptions());
     });
     const select = this.root.querySelector('#materialSelect');
     select.innerHTML = this.materials.map((material, index) => `<option value="${index}">${index + 1}. ${material.name || `未命名材质 ${index + 1}`}</option>`).join('');
@@ -420,6 +433,7 @@ export class RenderStudio {
     this.originalMaterials = [];
     this.materialsByIndex = {};
     this.originalNormalScales = new WeakMap();
+    this.materialNormalStrengths = new WeakMap();
     this.root.querySelector('#materialSelect').innerHTML = '';
     this.root.querySelector('#materialSelect').disabled = true;
     this.root.querySelector('#materialCount').textContent = '请先加载模型';
@@ -433,24 +447,31 @@ export class RenderStudio {
     const material = this.materials[index];
     const container = this.root.querySelector('#materialControls');
     if (!material) { container.innerHTML = ''; return; }
-    const value = readMaterial(material);
+    const value = readMaterial(material, this.materialNormalStrengths);
     const basicParameters = studioNumericParameters('material-basic');
     const advanced = visibleStudioParameters('material-advanced', material).filter((parameter) => parameter.kind === 'number');
     const originalDoubleSided = this.originalMaterials[index]?.doubleSided ? '双面' : '单面';
     container.innerHTML = `<section class="texture-channels" aria-label="纹理通道"><div class="texture-heading"><strong>纹理通道</strong><small>仅查看 · 来自当前 GLB</small></div><div class="texture-grid" id="materialTextureGrid"></div></section>
       <div class="material-colors"><label><span>基础颜色</span><span><input id="materialBaseColor" type="color" value="${toHex(value.baseColor)}">${resetButtonMarkup('materialBaseColor', '基础颜色')}</span></label><label><span>发光颜色</span><span><input id="materialEmissive" type="color" value="${toHex(value.emissive)}">${resetButtonMarkup('materialEmissive', '发光颜色')}</span></label></div>
-      <div class="parameter-group-heading"><strong>材质参数</strong><small data-adjusted-count="material-basic">已调整 0 项</small></div>${basicParameters.map(rangeMarkup).join('')}
-      <label class="select-row material-side-row"><span><strong>网格表面</strong><small>模型原始设置：${originalDoubleSided}</small></span><select id="materialDoubleSided"><option value="false">单面</option><option value="true">双面</option></select></label>
-      <p class="material-side-help">双面会显示网格背面；存在重叠面或内部结构时，可能出现穿插、重影或闪烁，并不代表更高画质。</p>
-      <label class="select-row"><span><strong>透明模式</strong></span><select id="materialAlphaMode"><option value="OPAQUE">不透明</option><option value="MASK">遮罩</option><option value="BLEND">混合</option></select></label>
+      <div class="parameter-group-heading"><strong>常用参数</strong><small data-adjusted-count="material-basic">已调整 0 项</small></div>${basicParameters.map((parameter) => `${rangeMarkup(parameter)}${parameter.key === 'normalStrength' ? '<p class="parameter-help" data-normal-strength-help>当前材质没有法线贴图</p>' : ''}`).join('')}
+      <details class="advanced-material surface-options"><summary>表面选项</summary><div class="surface-options-content"><label class="select-row material-side-row"><span><strong>网格表面</strong><small>模型原始设置：${originalDoubleSided}</small></span><select id="materialDoubleSided"><option value="false">单面</option><option value="true">双面</option></select></label>
+      <p class="material-side-help">双面会显示网格背面；存在重叠面或内部结构时，可能出现穿插、重影或闪烁。</p>
+      <label class="select-row"><span><strong>透明模式</strong></span><select id="materialAlphaMode"><option value="OPAQUE">不透明</option><option value="MASK">遮罩</option><option value="BLEND">混合</option></select></label></div></details>
       ${advanced.length ? `<details class="advanced-material"><summary>高级物理参数 <small data-adjusted-count="material-advanced">已调整 0 项</small></summary>${advanced.map(rangeMarkup).join('')}</details>` : ''}`;
-    for (const parameter of [...basicParameters, ...advanced]) this.bindMaterialRange(parameter, value[parameter.key]);
+    for (const parameter of [...basicParameters, ...advanced]) {
+      const fallback = parameter.key === 'normalStrength' ? 1 : parameter.min;
+      this.bindMaterialRange(parameter, value[parameter.key] ?? this.originalMaterials[index]?.[parameter.key] ?? fallback);
+    }
     container.querySelector('#materialBaseColor').addEventListener('input', (event) => this.updateMaterial({ baseColor: [...fromHex(event.target.value), value.baseColor[3] ?? 1] }));
     container.querySelector('#materialEmissive').addEventListener('input', (event) => this.updateMaterial({ emissive: fromHex(event.target.value) }));
     container.querySelector('[data-reset="materialBaseColor"]').addEventListener('click', () => this.resetMaterialParameter('baseColor'));
     container.querySelector('[data-reset="materialEmissive"]').addEventListener('click', () => this.resetMaterialParameter('emissive'));
     const doubleSided = container.querySelector('#materialDoubleSided'); doubleSided.value = String(value.doubleSided); doubleSided.addEventListener('change', (event) => this.updateDoubleSided(event));
     const alphaMode = container.querySelector('#materialAlphaMode'); alphaMode.value = value.alphaMode; alphaMode.addEventListener('change', (event) => this.updateMaterial({ alphaMode: event.target.value }));
+    const hasNormalTexture = Boolean(material.normalTexture?.texture);
+    for (const input of container.querySelectorAll('#materialNormalStrength, [data-number="materialNormalStrength"]')) input.disabled = !hasNormalTexture;
+    container.querySelector('[data-reset="materialNormalStrength"]')?.toggleAttribute('disabled', !hasNormalTexture || value.normalStrength === this.originalMaterials[index]?.normalStrength);
+    container.querySelector('[data-normal-strength-help]')?.toggleAttribute('hidden', hasNormalTexture);
     this.renderTextureChannels(material, container.querySelector('#materialTextureGrid'), renderToken);
   }
 
@@ -502,7 +523,7 @@ export class RenderStudio {
     try {
       material.setDoubleSided(requested);
       if (material.getDoubleSided() !== requested) throw new Error('DOUBLE_SIDED_MISMATCH');
-      this.materialsByIndex[index] = readMaterial(material);
+      this.materialsByIndex[index] = readMaterial(material, this.materialNormalStrengths);
       this.persist();
       this.updateMaterialResetButtons(index);
     } catch {
@@ -540,14 +561,14 @@ export class RenderStudio {
     const index = Number(this.root.querySelector('#materialSelect').value || 0);
     const material = this.materials[index];
     if (!material) return;
-    applyMaterial(material, change);
-    this.materialsByIndex[index] = readMaterial(material);
+    applyMaterial(material, change, this.materialApplyOptions());
+    this.materialsByIndex[index] = readMaterial(material, this.materialNormalStrengths);
     this.persist();
     this.updateMaterialResetButtons(index);
   }
 
   updateMaterialResetButtons(index = Number(this.root.querySelector('#materialSelect').value || 0)) {
-    const current = this.materials[index] ? readMaterial(this.materials[index]) : null;
+    const current = this.materials[index] ? readMaterial(this.materials[index], this.materialNormalStrengths) : null;
     const original = this.originalMaterials[index];
     if (!current || !original) return;
     for (const parameter of [...studioParameters('material-basic'), ...studioParameters('material-advanced')]) {
@@ -571,14 +592,14 @@ export class RenderStudio {
   resetCurrentMaterial() {
     const index = Number(this.root.querySelector('#materialSelect').value || 0);
     if (!this.materials[index] || !this.originalMaterials[index]) return;
-    applyMaterial(this.materials[index], this.originalMaterials[index]);
+    applyMaterial(this.materials[index], this.originalMaterials[index], this.materialApplyOptions());
     delete this.materialsByIndex[index];
     this.persist();
     this.renderMaterialControls();
   }
 
   resetAllMaterials() {
-    this.materials.forEach((material, index) => applyMaterial(material, this.originalMaterials[index]));
+    this.materials.forEach((material, index) => applyMaterial(material, this.originalMaterials[index], this.materialApplyOptions()));
     this.materialsByIndex = {};
     this.persist();
     this.renderMaterialControls();
@@ -596,7 +617,6 @@ export class RenderStudio {
     saveButton.title = appearance.writable ? '保存后所有访问者首次预览都使用这套光照' : '只能在运行服务的电脑上保存';
     this.lighting = sanitizeLighting(appearance.lighting);
     applyLighting(this.viewer, this.lighting);
-    applyNormalStrength(this.materials, this.lighting.normalStrength, this.originalNormalScales, this.viewer);
     this.syncLightingUI();
     this.resetAllMaterials();
     this.cancelPersist?.();
@@ -622,5 +642,9 @@ export class RenderStudio {
 
   getSnapshot() {
     return { version: STUDIO_STATE_VERSION, lighting: { ...this.lighting }, materialsByIndex: structuredClone(this.materialsByIndex) };
+  }
+
+  materialApplyOptions() {
+    return { originalNormalScales: this.originalNormalScales, normalStrengths: this.materialNormalStrengths, viewer: this.viewer };
   }
 }

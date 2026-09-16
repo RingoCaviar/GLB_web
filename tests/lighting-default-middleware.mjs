@@ -29,15 +29,15 @@ try {
   const middleware = createLightingDefaultMiddleware(root);
   const savedResponse = response();
   await middleware(request('POST', '/__lighting-default/save', JSON.stringify({
-    lighting: { preset: 'outdoor', exposure: 1.35, desaturate: false, normalStrength: 1.7 },
+    lighting: { preset: 'brown_photostudio_02_2k', exposure: 1.35, desaturate: false, normalStrength: 1.7 },
   })), savedResponse, () => assert.fail('save request unexpectedly passed through'));
   assert.equal(savedResponse.statusCode, 200, savedResponse.body);
 
   const disk = JSON.parse(await fs.readFile(join(root, 'config', 'default-lighting.json'), 'utf8'));
-  assert.equal(disk.preset, 'outdoor');
+  assert.equal(disk.preset, 'brown_photostudio_02_2k');
   assert.equal(disk.exposure, 1.35);
   assert.equal(disk.desaturate, false);
-  assert.equal(disk.normalStrength, 1.7);
+  assert.equal(Object.hasOwn(disk, 'normalStrength'), false);
 
   const readResponse = response();
   await middleware(request('GET', '/__lighting-default/current'), readResponse, () => assert.fail('read request unexpectedly passed through'));
