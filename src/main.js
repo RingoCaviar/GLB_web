@@ -1,6 +1,7 @@
 import '@google/model-viewer';
 import './style.css';
 import { libraryEntries, models, parentFolder, recentModels } from './model-library.js';
+import { filterLibraryItems } from './library-search.js';
 import {
   createModelThumbnail,
   loadSavedModelThumbnail,
@@ -85,6 +86,7 @@ const state = {
   sequenceSelectionMode: false,
   selectedSequenceIds: new Set(),
   sequenceJobRunning: false,
+  libraryQuery: '',
   renderQuality: {
     applied: false,
     compatibility: false,
@@ -177,6 +179,14 @@ document.querySelector('#app').innerHTML = `
               <button class="library-batch-button primary" id="sequenceBatchBuild" type="button" hidden>构建已选 (0)</button>
               <button class="library-close" id="closeLibrary" type="button" aria-label="关闭模型库">×</button>
             </div>
+          </div>
+          <div class="library-tools">
+            <label class="library-search" for="librarySearch">
+              <span aria-hidden="true">⌕</span>
+              <input id="librarySearch" type="search" aria-label="搜索模型或文件夹" placeholder="搜索模型名称或文件夹" autocomplete="off">
+              <button id="clearLibrarySearch" type="button" aria-label="清空搜索" hidden>×</button>
+            </label>
+            <span class="library-count" id="libraryCount" aria-live="polite"></span>
           </div>
           <nav class="breadcrumbs" id="breadcrumbs" aria-label="模型文件夹路径"></nav>
           <div class="library-grid" id="libraryGrid"></div>
@@ -391,6 +401,16 @@ function escapeHtml(value) {
   })[character]);
 }
 
+function updateLibrarySearch(mode, visibleCount, totalCount) {
+  const input = document.querySelector('#librarySearch');
+  input.placeholder = mode === 'sequence' ? '搜索360°产品名称或文件夹' : '搜索模型名称或文件夹';
+  if (input.value !== state.libraryQuery) input.value = state.libraryQuery;
+  document.querySelector('#clearLibrarySearch').hidden = !state.libraryQuery;
+  document.querySelector('#libraryCount').textContent = state.libraryQuery
+    ? `找到 ${visibleCount} / ${totalCount} 项`
+    : `共 ${totalCount} 项`;
+}
+
 function renderModelLibrary() {
   if (state.mode === 'sequence') {
     renderSequenceLibrary();
@@ -402,7 +422,12 @@ function renderModelLibrary() {
   document.querySelector('#sequenceBatchMode').hidden = true;
   document.querySelector('#sequenceBatchBuild').hidden = true;
   document.querySelector('#closeLibrary').disabled = !state.selectedModel;
-  const entries = libraryEntries(state.currentFolder);
+  const searching = Boolean(state.libraryQuery.trim());
+  const entries = searching
+    ? { folders: [], models: filterLibraryItems(state.models, state.libraryQuery) }
+    : libraryEntries(state.currentFolder);
+  updateLibrarySearch('model', entries.models.length, state.models.length);
+  breadcrumbs.hidden = searching;
   const pathParts = state.currentFolder.split('/').filter(Boolean);
   breadcrumbs.innerHTML = [
     '<button type="button" data-folder="">全部模型</button>',
@@ -412,7 +437,7 @@ function renderModelLibrary() {
     }),
   ].join('');
 
-  const folderCards = [
+  const folderCards = searching ? [] : [
     ...(state.currentFolder ? [`<button class="library-card folder-card back-card" type="button" data-folder="${escapeHtml(parentFolder(state.currentFolder))}">
       <span class="folder-icon back" aria-hidden="true"></span><strong>返回上一级</strong><small>${escapeHtml(parentFolder(state.currentFolder) || '全部模型')}</small>
     </button>`] : []),
@@ -435,7 +460,7 @@ function renderModelLibrary() {
   </button>`;
   };
   const modelCards = entries.models.map(modelCard);
-  const recentSection = !state.currentFolder && state.models.length
+  const recentSection = !searching && !state.currentFolder && state.models.length
     ? `<section class="recent-models" aria-labelledby="recentModelsTitle">
         <div class="library-section-title"><h3 id="recentModelsTitle">最近更新</h3><span>最新添加的模型 · 最多 10 个</span></div>
         <div class="recent-grid">${recentModels(10).map(modelCard).join('')}</div>
@@ -443,7 +468,7 @@ function renderModelLibrary() {
       <div class="library-section-title browse-title"><h3>浏览文件夹</h3><span>按目录查找全部模型</span></div>`
     : '';
   libraryGrid.innerHTML = recentSection + [...folderCards, ...modelCards].join('') ||
-    '<div class="library-empty">这个文件夹中没有可预览的 GLB 模型。</div>';
+    `<div class="library-empty">${searching ? `没有找到与“${escapeHtml(state.libraryQuery.trim())}”匹配的模型。` : '这个文件夹中没有可预览的 GLB 模型。'}</div>`;
 }
 
 function renderSequenceLibrary() {
@@ -459,7 +484,12 @@ function renderSequenceLibrary() {
   batchBuild.textContent = `构建已选 (${state.selectedSequenceIds.size})`;
   batchBuild.disabled = !state.selectedSequenceIds.size || !sequenceWritable || state.sequenceJobRunning;
   document.querySelector('#closeLibrary').disabled = !state.selectedSequence;
-  const entries = sequenceLibraryEntries(state.sequenceFolder);
+  const searching = Boolean(state.libraryQuery.trim());
+  const entries = searching
+    ? { folders: [], products: filterLibraryItems(sequenceProducts, state.libraryQuery) }
+    : sequenceLibraryEntries(state.sequenceFolder);
+  updateLibrarySearch('sequence', entries.products.length, sequenceProducts.length);
+  breadcrumbs.hidden = searching;
   const pathParts = state.sequenceFolder.split('/').filter(Boolean);
   breadcrumbs.innerHTML = [
     '<button type="button" data-sequence-folder="">全部产品</button>',
@@ -468,7 +498,7 @@ function renderSequenceLibrary() {
       return `<span>/</span><button type="button" data-sequence-folder="${escapeHtml(path)}">${escapeHtml(part)}</button>`;
     }),
   ].join('');
-  const folders = [
+  const folders = searching ? [] : [
     ...(state.sequenceFolder ? [`<button class="library-card folder-card back-card" type="button" data-sequence-folder="${escapeHtml(sequenceParentFolder(state.sequenceFolder))}">
       <span class="folder-icon back" aria-hidden="true"></span><strong>返回上一级</strong><small>${escapeHtml(sequenceParentFolder(state.sequenceFolder) || '全部产品')}</small></button>`] : []),
     ...entries.folders.map((folder) => {
@@ -482,7 +512,7 @@ function renderSequenceLibrary() {
   </button>`);
   libraryGrid.innerHTML = state.sequenceLibraryLoading
     ? '<div class="library-empty">正在扫描 image_sequence 并清理失效缓存…</div>'
-    : [...folders, ...cards].join('') || '<div class="library-empty">image_sequence 中没有可用的帧序列产品。</div>';
+    : [...folders, ...cards].join('') || `<div class="library-empty">${searching ? `没有找到与“${escapeHtml(state.libraryQuery.trim())}”匹配的产品。` : 'image_sequence 中没有可用的帧序列产品。'}</div>`;
 }
 
 function closeContextMenu() {
@@ -599,6 +629,7 @@ function closeModelLibrary() {
 function switchMode(mode) {
   if (!['model', 'sequence'].includes(mode) || state.mode === mode) return;
   state.mode = mode;
+  state.libraryQuery = '';
   shell.dataset.mode = mode;
   sequenceViewer.stop();
   document.querySelectorAll('[data-mode]').forEach((button) => {
@@ -1513,6 +1544,15 @@ exportButton.addEventListener('click', exportImage);
 
 document.querySelector('#openLibrary').addEventListener('click', openModelLibrary);
 document.querySelector('#closeLibrary').addEventListener('click', closeModelLibrary);
+document.querySelector('#librarySearch').addEventListener('input', (event) => {
+  state.libraryQuery = event.target.value;
+  renderModelLibrary();
+});
+document.querySelector('#clearLibrarySearch').addEventListener('click', () => {
+  state.libraryQuery = '';
+  renderModelLibrary();
+  document.querySelector('#librarySearch').focus();
+});
 document.querySelectorAll('[data-mode]').forEach((button) => button.addEventListener('click', () => switchMode(button.dataset.mode)));
 library.addEventListener('click', (event) => {
   const sequenceFolderButton = event.target.closest('[data-sequence-folder]');
