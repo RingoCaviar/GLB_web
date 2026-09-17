@@ -33,7 +33,9 @@
     "test:export-quality": "node tests/export-quality.mjs",
     "test:webgl-capabilities": "node tests/webgl-capabilities.mjs",
     "test:library-search": "node tests/library-search.mjs",
-    "test:thumbnail-appearance": "node tests/thumbnail-appearance.mjs"
+    "test:thumbnail-appearance": "node tests/thumbnail-appearance.mjs",
+    "test:model-thumbnail-batch": "node tests/model-thumbnail-batch.mjs",
+    "test:model-thumbnail-batch-browser": "node tests/model-thumbnail-batch-browser.mjs"
   },
   "dependencies": {
     "@google/model-viewer": "4.3.1",

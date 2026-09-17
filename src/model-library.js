@@ -31,13 +31,13 @@ function findThumbnail(assetPath) {
   const extensions = ['webp', 'png', 'jpg', 'jpeg'];
   for (const extension of extensions) {
     const specific = coverAssets[`${directory}${baseName}.cover.${extension}`];
-    if (specific) return specific;
+    if (specific) return { url: specific, dedicated: true };
   }
   for (const extension of extensions) {
     const shared = coverAssets[`${directory}cover.${extension}`];
-    if (shared) return shared;
+    if (shared) return { url: shared, dedicated: false };
   }
-  return null;
+  return { url: null, dedicated: false };
 }
 
 export const models = Object.entries(modelAssets)
@@ -45,12 +45,14 @@ export const models = Object.entries(modelAssets)
     const id = relativePath(assetPath);
     const segments = id.split('/');
     const filename = segments.pop();
+    const thumbnail = findThumbnail(assetPath);
     return {
       id,
       name: withoutExtension(filename),
       folderPath: segments.join('/'),
       url,
-      thumbnailUrl: findThumbnail(assetPath),
+      thumbnailUrl: thumbnail.url,
+      hasDedicatedThumbnail: thumbnail.dedicated,
       addedAt: modelMetadata[id]?.addedAt ?? 0,
     };
   })

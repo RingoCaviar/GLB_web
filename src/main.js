@@ -2,6 +2,7 @@ import '@google/model-viewer';
 import './style.css';
 import { libraryEntries, models, parentFolder, recentModels } from './model-library.js';
 import { filterLibraryItems } from './library-search.js';
+import { modelsInFolder, runThumbnailBatch } from './model-thumbnail-batch.js';
 import {
   createModelThumbnail,
   loadSavedModelThumbnail,
@@ -79,6 +80,10 @@ const state = {
   thumbnailWritable: false,
   thumbnailCapabilityReady: false,
   thumbnailGeneratingId: null,
+  modelSelectionMode: false,
+  selectedModelIds: new Set(),
+  thumbnailBatchRunning: false,
+  thumbnailBatchStopRequested: false,
   mode: 'model',
   sequenceFolder: '',
   selectedSequence: null,
@@ -332,6 +337,26 @@ document.querySelector('#app').innerHTML = `
       <div class="thumbnail-variant-actions"><button class="secondary-button" id="thumbnailVariantBack" type="button">取消</button><button class="primary-button" id="thumbnailVariantConfirm" type="button">生成并替换封面</button></div>
     </form>
   </dialog>
+  <dialog class="thumbnail-batch-dialog" id="thumbnailBatchDialog">
+    <form method="dialog">
+      <div class="build-dialog-heading"><div><span class="eyebrow">BATCH MODEL COVERS</span><h2>批量生成模型封面</h2></div><button id="thumbnailBatchClose" type="button" aria-label="关闭">×</button></div>
+      <div id="thumbnailBatchSetup">
+        <div class="build-summary"><div><small>模型</small><strong id="thumbnailBatchTotal">0</strong></div><div><small>生成方式</small><strong>串行</strong></div></div>
+        <fieldset class="batch-choice"><legend>封面范围</legend><label><input type="radio" name="thumbnailOverwrite" value="missing" checked> 仅生成缺失封面</label><label><input type="radio" name="thumbnailOverwrite" value="all"> 全部重新生成</label></fieldset>
+        <fieldset class="batch-choice"><legend>外观变体</legend><label><input type="radio" name="thumbnailAppearance" value="original" checked> 全部使用原始外观</label><label><input type="radio" name="thumbnailAppearance" value="choose"> 逐个选择外观变体</label></fieldset>
+        <p class="build-note">已完成的封面不会回滚；单个模型失败后会继续处理其余模型。</p>
+        <button class="primary-button" id="thumbnailBatchStart" type="button">开始生成</button>
+      </div>
+      <div id="thumbnailBatchProgress" hidden>
+        <div class="build-progress-value"><strong id="thumbnailBatchPercent">0%</strong><span id="thumbnailBatchCounts">0 / 0</span></div>
+        <div class="build-progress-track"><i id="thumbnailBatchBar"></i></div>
+        <p id="thumbnailBatchCurrent">正在准备…</p>
+        <div class="build-result"><span>成功 <strong id="thumbnailBatchSuccess">0</strong></span><span>跳过 <strong id="thumbnailBatchSkipped">0</strong></span><span>失败 <strong id="thumbnailBatchFailed">0</strong></span></div>
+        <div class="batch-issues" id="thumbnailBatchIssues"></div>
+        <button class="danger-button" id="thumbnailBatchStop" type="button">停止任务</button>
+      </div>
+    </form>
+  </dialog>
 `;
 
 function controlTemplate(label, id, min, max, step, unit) {
@@ -378,7 +403,9 @@ const verticalShiftControls = [
 ];
 let contextModel = null;
 let contextSequenceTarget = null;
+let contextModelFolder = null;
 let pendingThumbnailVariant = null;
+let pendingThumbnailBatchModels = [];
 let pendingSequenceBuildIds = [];
 let sequenceJobPoll = 0;
 
@@ -428,8 +455,14 @@ function renderModelLibrary() {
   document.querySelector('.library-header .eyebrow').textContent = 'MODEL LIBRARY';
   document.querySelector('.library-header h2').textContent = '选择要预览的模型';
   library.setAttribute('aria-label', '模型库');
-  document.querySelector('#sequenceBatchMode').hidden = true;
-  document.querySelector('#sequenceBatchBuild').hidden = true;
+  const batchMode = document.querySelector('#sequenceBatchMode');
+  const batchBuild = document.querySelector('#sequenceBatchBuild');
+  batchMode.hidden = false;
+  batchMode.textContent = state.modelSelectionMode ? '退出批量' : '批量选择';
+  batchMode.classList.toggle('active', state.modelSelectionMode);
+  batchBuild.hidden = !state.modelSelectionMode;
+  batchBuild.textContent = `生成已选 (${state.selectedModelIds.size})`;
+  batchBuild.disabled = !state.selectedModelIds.size || !state.thumbnailWritable || state.thumbnailBatchRunning;
   document.querySelector('#closeLibrary').disabled = !state.selectedModel;
   const searching = Boolean(state.libraryQuery.trim());
   const entries = searching
@@ -452,7 +485,7 @@ function renderModelLibrary() {
     </button>`] : []),
     ...entries.folders.map((folder) => {
     const path = state.currentFolder ? `${state.currentFolder}/${folder}` : folder;
-    return `<button class="library-card folder-card" type="button" data-folder="${escapeHtml(path)}">
+    return `<button class="library-card folder-card" type="button" data-folder="${escapeHtml(path)}" data-thumbnail-folder="${escapeHtml(path)}">
       <span class="folder-icon" aria-hidden="true"></span>
       <strong>${escapeHtml(folder)}</strong><small>打开文件夹</small>
     </button>`;
@@ -460,11 +493,12 @@ function renderModelLibrary() {
   ];
   const modelCard = (model) => {
     const generating = state.thumbnailGeneratingId === model.id;
-    return `<button class="library-card model-card${state.selectedModel?.id === model.id ? ' selected' : ''}${generating ? ' generating' : ''}" type="button" data-model-id="${escapeHtml(model.id)}">
+    return `<button class="library-card model-card${state.selectedModel?.id === model.id ? ' selected' : ''}${state.selectedModelIds.has(model.id) ? ' batch-selected' : ''}${generating ? ' generating' : ''}" type="button" data-model-id="${escapeHtml(model.id)}">
     <span class="thumbnail">${model.thumbnailUrl
       ? `<img src="${escapeHtml(model.thumbnailUrl)}" alt="" loading="lazy">`
       : '<span class="model-placeholder" aria-hidden="true">3D</span>'}</span>
     ${generating ? '<span class="thumbnail-busy">生成中…</span>' : ''}
+    ${state.modelSelectionMode ? `<span class="sequence-checkbox">${state.selectedModelIds.has(model.id) ? '✓' : ''}</span>` : ''}
     <strong>${escapeHtml(model.name)}</strong><small>${escapeHtml(model.folderPath || 'models')}</small>
   </button>`;
   };
@@ -526,12 +560,14 @@ function renderSequenceLibrary() {
 
 function closeContextMenu() {
   contextModel = null;
+  contextModelFolder = null;
   contextSequenceTarget = null;
   contextMenu.hidden = true;
 }
 
 function openContextMenu(event, model) {
   contextModel = model;
+  contextModelFolder = null;
   contextSequenceTarget = null;
   generateThumbnailButton.hidden = false;
   generateSequenceCacheButton.hidden = true;
@@ -601,6 +637,19 @@ function thumbnailErrorMessage(error) {
   return '缩略图保存失败，请检查模型目录权限和服务日志。';
 }
 
+function openModelFolderContextMenu(event, folderPath) {
+  contextModel = null;
+  contextModelFolder = folderPath;
+  contextSequenceTarget = null;
+  generateThumbnailButton.hidden = false;
+  generateSequenceCacheButton.hidden = true;
+  const count = modelsInFolder(state.models, folderPath).length;
+  generateThumbnailButton.disabled = !state.thumbnailWritable || state.thumbnailBatchRunning || count === 0;
+  generateThumbnailButton.textContent = '递归生成此文件夹封面';
+  contextMenuHint.textContent = `${count} 个模型 · 可选仅缺失或全部覆盖`;
+  positionContextMenu(event);
+}
+
 function chooseThumbnailVariant(options) {
   const dialog = document.querySelector('#thumbnailVariantDialog');
   pendingThumbnailVariant = options[0];
@@ -620,32 +669,88 @@ function finishThumbnailVariantChoice(value) {
   resolve?.(value);
 }
 
+async function createAndSaveModelThumbnail(model, chooseVariant) {
+  const appearance = await resolveModelAppearance(model.id);
+  const dataUrl = await createModelThumbnail(model.url, appearance, state, { chooseVariant });
+  const result = await saveModelThumbnail(model.id, dataUrl);
+  model.thumbnailUrl = result.thumbnailUrl;
+  model.hasDedicatedThumbnail = true;
+  return result;
+}
+
 async function generateModelThumbnail(model) {
   if (!model || !state.thumbnailWritable || state.thumbnailGeneratingId !== null) return;
   state.thumbnailGeneratingId = model.id;
-  closeContextMenu();
-  renderModelLibrary();
+  closeContextMenu(); renderModelLibrary();
   showMessage(`正在为 ${model.name} 生成 640 × 480 缩略图…`);
   try {
-    const appearance = await resolveModelAppearance(model.id);
-    if (appearance.usedBuiltinDefault) showMessage('项目默认光照读取失败，缩略图已使用内置默认光照。', 'error');
-    const dataUrl = await createModelThumbnail(model.url, {
-      ...appearance,
-    }, state, { chooseVariant: chooseThumbnailVariant });
-    const result = await saveModelThumbnail(model.id, dataUrl);
-    model.thumbnailUrl = result.thumbnailUrl;
+    const result = await createAndSaveModelThumbnail(model, chooseThumbnailVariant);
     showMessage(`已生成 ${result.filename}。`, 'success');
   } catch (error) {
-    if (error.code === 'THUMBNAIL_CANCELLED') {
-      showMessage('已取消生成模型封面。');
-      return;
-    }
-    console.error(error);
-    showMessage(thumbnailErrorMessage(error), 'error');
+    if (error.code === 'THUMBNAIL_CANCELLED') showMessage('已取消生成模型封面。');
+    else { console.error(error); showMessage(thumbnailErrorMessage(error), 'error'); }
   } finally {
-    state.thumbnailGeneratingId = null;
-    renderModelLibrary();
+    state.thumbnailGeneratingId = null; renderModelLibrary();
   }
+}
+
+function openThumbnailBatchDialog(targetModels) {
+  pendingThumbnailBatchModels = [...new Map(targetModels.map((model) => [model.id, model])).values()];
+  closeContextMenu();
+  document.querySelector('#thumbnailBatchTotal').textContent = pendingThumbnailBatchModels.length;
+  document.querySelector('#thumbnailBatchSetup').hidden = false;
+  document.querySelector('#thumbnailBatchProgress').hidden = true;
+  document.querySelector('#thumbnailBatchClose').disabled = false;
+  const stop = document.querySelector('#thumbnailBatchStop');
+  stop.disabled = false; stop.textContent = '停止任务'; stop.className = 'danger-button';
+  document.querySelector('#thumbnailBatchDialog').showModal();
+}
+
+function renderThumbnailBatchProgress(progress, result) {
+  const completed = result.successIds.length + result.unchangedIds.length + result.skippedIds.length + result.failedIds.length;
+  const total = pendingThumbnailBatchModels.length;
+  const percent = total ? Math.round(completed / total * 100) : 100;
+  document.querySelector('#thumbnailBatchPercent').textContent = `${percent}%`;
+  document.querySelector('#thumbnailBatchCounts').textContent = `${completed} / ${total}`;
+  document.querySelector('#thumbnailBatchBar').style.width = `${percent}%`;
+  document.querySelector('#thumbnailBatchSuccess').textContent = result.successIds.length;
+  document.querySelector('#thumbnailBatchSkipped').textContent = result.skippedIds.length + result.unchangedIds.length;
+  document.querySelector('#thumbnailBatchFailed').textContent = result.failedIds.length;
+  if (progress?.model) document.querySelector('#thumbnailBatchCurrent').textContent = `正在处理：${progress.model.name} (${progress.index + 1} / ${total})`;
+  document.querySelector('#thumbnailBatchIssues').innerHTML = result.issues.slice(-6).map((issue) => `<p><strong>${escapeHtml(issue.name || issue.id)}</strong><span>${escapeHtml(issue.reason || issue.status)}</span></p>`).join('');
+}
+
+async function startThumbnailBatch() {
+  const overwrite = document.querySelector('[name="thumbnailOverwrite"]:checked').value;
+  const appearanceStrategy = document.querySelector('[name="thumbnailAppearance"]:checked').value;
+  state.thumbnailBatchRunning = true; state.thumbnailBatchStopRequested = false;
+  document.querySelector('#thumbnailBatchSetup').hidden = true;
+  document.querySelector('#thumbnailBatchProgress').hidden = false;
+  document.querySelector('#thumbnailBatchClose').disabled = true;
+  const result = await runThumbnailBatch(pendingThumbnailBatchModels, async (model) => {
+    if (overwrite === 'missing' && model.hasDedicatedThumbnail) return { status: 'unchanged' };
+    state.thumbnailGeneratingId = model.id; renderModelLibrary();
+    try {
+      const chooser = appearanceStrategy === 'original' ? async () => APPEARANCE_ORIGINAL_VALUE : chooseThumbnailVariant;
+      await createAndSaveModelThumbnail(model, chooser);
+      return { status: 'success' };
+    } catch (error) {
+      if (error.code === 'THUMBNAIL_CANCELLED') return { status: 'skipped', reason: '未选择外观' };
+      error.message = thumbnailErrorMessage(error); throw error;
+    } finally { state.thumbnailGeneratingId = null; renderModelLibrary(); }
+  }, {
+    shouldStop: () => state.thumbnailBatchStopRequested,
+    onProgress: (progress) => renderThumbnailBatchProgress(progress, progress.result),
+  });
+  state.thumbnailBatchRunning = false;
+  const retryIds = new Set([...result.skippedIds, ...result.failedIds, ...result.pendingIds]);
+  state.selectedModelIds = retryIds;
+  if (!retryIds.size) state.modelSelectionMode = false;
+  renderModelLibrary(); renderThumbnailBatchProgress(null, result);
+  document.querySelector('#thumbnailBatchCurrent').textContent = result.stopped ? '已停止，已完成结果保留。' : retryIds.size ? '任务完成，失败或跳过项已保留勾选。' : '全部模型封面生成完成。';
+  const stop = document.querySelector('#thumbnailBatchStop');
+  stop.disabled = false; stop.textContent = '关闭'; stop.className = 'secondary-button';
+  document.querySelector('#thumbnailBatchClose').disabled = false;
 }
 
 function openModelLibrary() {
@@ -665,6 +770,8 @@ function switchMode(mode) {
   if (!['model', 'sequence'].includes(mode) || state.mode === mode) return;
   state.mode = mode;
   state.libraryQuery = '';
+  state.modelSelectionMode = false;
+  state.selectedModelIds.clear();
   shell.dataset.mode = mode;
   sequenceViewer.stop();
   document.querySelectorAll('[data-mode]').forEach((button) => {
@@ -1609,7 +1716,14 @@ library.addEventListener('click', (event) => {
     return;
   }
   const modelButton = event.target.closest('[data-model-id]');
-  if (modelButton) selectModel(state.models.find((model) => model.id === modelButton.dataset.modelId));
+  if (modelButton) {
+    const model = state.models.find((item) => item.id === modelButton.dataset.modelId);
+    if (state.modelSelectionMode) {
+      if (state.selectedModelIds.has(model.id)) state.selectedModelIds.delete(model.id);
+      else state.selectedModelIds.add(model.id);
+      renderModelLibrary();
+    } else selectModel(model);
+  }
 });
 library.addEventListener('contextmenu', (event) => {
   if (window.matchMedia('(pointer: coarse)').matches) return;
@@ -1622,12 +1736,17 @@ library.addEventListener('contextmenu', (event) => {
     return;
   }
   const modelCard = event.target.closest('[data-model-id]');
-  if (!modelCard) return;
+  const modelFolder = event.target.closest('[data-thumbnail-folder]');
+  if (!modelCard && !modelFolder) return;
   event.preventDefault();
+  if (modelFolder) { openModelFolderContextMenu(event, modelFolder.dataset.thumbnailFolder); return; }
   const model = state.models.find((item) => item.id === modelCard.dataset.modelId);
   if (model) openContextMenu(event, model);
 });
-generateThumbnailButton.addEventListener('click', () => generateModelThumbnail(contextModel));
+generateThumbnailButton.addEventListener('click', () => {
+  if (contextModelFolder !== null) openThumbnailBatchDialog(modelsInFolder(state.models, contextModelFolder));
+  else generateModelThumbnail(contextModel);
+});
 document.querySelector('#thumbnailVariantOptions').addEventListener('click', (event) => {
   const option = event.target.closest('[data-thumbnail-variant]');
   if (!option) return;
@@ -1649,11 +1768,30 @@ generateSequenceCacheButton.addEventListener('click', () => {
   openSequenceBuildDialog(ids);
 });
 document.querySelector('#sequenceBatchMode').addEventListener('click', () => {
-  state.sequenceSelectionMode = !state.sequenceSelectionMode;
-  state.selectedSequenceIds.clear();
-  renderSequenceLibrary();
+  if (state.mode === 'model') {
+    state.modelSelectionMode = !state.modelSelectionMode;
+    if (!state.modelSelectionMode) state.selectedModelIds.clear();
+    renderModelLibrary();
+  } else {
+    state.sequenceSelectionMode = !state.sequenceSelectionMode;
+    state.selectedSequenceIds.clear();
+    renderSequenceLibrary();
+  }
 });
-document.querySelector('#sequenceBatchBuild').addEventListener('click', () => openSequenceBuildDialog([...state.selectedSequenceIds]));
+document.querySelector('#sequenceBatchBuild').addEventListener('click', () => {
+  if (state.mode === 'model') openThumbnailBatchDialog(state.models.filter((model) => state.selectedModelIds.has(model.id)));
+  else openSequenceBuildDialog([...state.selectedSequenceIds]);
+});
+document.querySelector('#thumbnailBatchStart').addEventListener('click', startThumbnailBatch);
+document.querySelector('#thumbnailBatchStop').addEventListener('click', () => {
+  if (state.thumbnailBatchRunning) {
+    state.thumbnailBatchStopRequested = true;
+    document.querySelector('#thumbnailBatchStop').disabled = true;
+    document.querySelector('#thumbnailBatchCurrent').textContent = '正在停止，当前模型完成后不再启动新任务…';
+  } else document.querySelector('#thumbnailBatchDialog').close();
+});
+document.querySelector('#thumbnailBatchClose').addEventListener('click', () => { if (!state.thumbnailBatchRunning) document.querySelector('#thumbnailBatchDialog').close(); });
+document.querySelector('#thumbnailBatchDialog').addEventListener('cancel', (event) => { if (state.thumbnailBatchRunning) event.preventDefault(); });
 document.querySelectorAll('[data-sequence-size]').forEach((button) => button.addEventListener('click', () => {
   document.querySelector('#sequenceBuildSize').value = button.dataset.sequenceSize;
 }));
