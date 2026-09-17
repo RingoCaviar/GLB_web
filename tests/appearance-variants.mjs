@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {
   APPEARANCE_ORIGINAL_VALUE,
   appearanceVariantTemplate,
+  appearanceOptionMeta,
   appearanceOptions,
   resetAppearanceVariant,
   selectAppearanceVariant,
@@ -13,6 +14,8 @@ assert.deepEqual(appearanceOptions(['医疗蓝', '经典白']), [
   { value: '医疗蓝', label: '医疗蓝' },
   { value: '经典白', label: '经典白' },
 ]);
+assert.equal(appearanceOptionMeta(APPEARANCE_ORIGINAL_VALUE), 'GLB 原始材质');
+assert.equal(appearanceOptionMeta('医疗蓝'), '模型内嵌变体');
 
 const viewer = { availableVariants: ['医疗蓝', '经典白'], variantName: null };
 assert.equal(selectAppearanceVariant(viewer, '医疗蓝'), true);

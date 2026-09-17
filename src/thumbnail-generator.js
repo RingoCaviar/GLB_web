@@ -1,6 +1,7 @@
 import { applyMaximumTextureQuality, resetTextureQuality } from './render-quality.js';
 import { applyLighting, applyMaterial, DEFAULT_LIGHTING } from './render-studio.js';
 import { renderFixedSizeImage } from './fixed-size-render.js';
+import { prepareThumbnailAppearance } from './thumbnail-appearance.js';
 import {
   renderThumbnailWithFraming,
   resolveThumbnailCameraFraming,
@@ -48,7 +49,12 @@ function canvasToWebp(canvas) {
   });
 }
 
-export async function createModelThumbnail(modelUrl, appearance = null, sharedCameraFraming = null) {
+export async function createModelThumbnail(
+  modelUrl,
+  appearance = null,
+  sharedCameraFraming = null,
+  { chooseVariant } = {},
+) {
   const ratio = window.devicePixelRatio || 1;
   const cameraFraming = resolveThumbnailCameraFraming(sharedCameraFraming);
   const viewer = document.createElement('model-viewer');
@@ -73,12 +79,16 @@ export async function createModelThumbnail(modelUrl, appearance = null, sharedCa
     document.body.append(viewer);
     viewer.src = modelUrl;
     await loaded;
-    const originalNormalScales = new WeakMap();
-    const normalStrengths = new WeakMap();
-    for (const [index, materialState] of Object.entries(appearance?.materialsByIndex ?? {})) {
-      const material = viewer.model?.materials?.[Number(index)];
-      if (material) applyMaterial(material, materialState, { originalNormalScales, normalStrengths, viewer });
-    }
+    await prepareThumbnailAppearance(viewer, chooseVariant, {
+      applySavedAppearance: () => {
+        const originalNormalScales = new WeakMap();
+        const normalStrengths = new WeakMap();
+        for (const [index, materialState] of Object.entries(appearance?.materialsByIndex ?? {})) {
+          const material = viewer.model?.materials?.[Number(index)];
+          if (material) applyMaterial(material, materialState, { originalNormalScales, normalStrengths, viewer });
+        }
+      },
+    });
     await viewer.updateFraming();
     viewer.jumpCameraToGoal();
     await viewer.updateComplete;

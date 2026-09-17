@@ -12,6 +12,10 @@ export function appearanceOptions(availableVariants = []) {
   ];
 }
 
+export function appearanceOptionMeta(value) {
+  return value === APPEARANCE_ORIGINAL_VALUE ? 'GLB 原始材质' : '模型内嵌变体';
+}
+
 export function selectAppearanceVariant(viewer, value) {
   if (value === APPEARANCE_ORIGINAL_VALUE) {
     viewer.variantName = null;
@@ -99,7 +103,7 @@ export class AppearanceVariantSelector {
     this.root.querySelector('#appearanceVariantOptions').innerHTML = visible.map(({ value, label }) => `
       <button type="button" role="option" data-appearance-variant="${escapeHtml(value)}" aria-selected="${value === this.currentValue}">
         <span class="appearance-option-thumbnail">${this.thumbnailMarkup(value)}</span>
-        <span><strong>${escapeHtml(label)}</strong><small>${value === APPEARANCE_ORIGINAL_VALUE ? 'GLB 原始材质' : '模型内嵌变体'}</small></span>
+        <span><strong>${escapeHtml(label)}</strong><small>${appearanceOptionMeta(value)}</small></span>
         <i aria-hidden="true">✓</i>
       </button>`).join('') || '<p class="appearance-variant-empty">没有匹配的外观</p>';
   }
@@ -124,7 +128,7 @@ export class AppearanceVariantSelector {
   updateCurrentDisplay() {
     const option = this.options.find(({ value }) => value === this.currentValue);
     this.root.querySelector('#appearanceVariantName').textContent = option?.label ?? '原始外观';
-    this.root.querySelector('#appearanceVariantMeta').textContent = this.currentValue === APPEARANCE_ORIGINAL_VALUE ? 'GLB 原始材质' : '模型内嵌变体';
+    this.root.querySelector('#appearanceVariantMeta').textContent = appearanceOptionMeta(this.currentValue);
     this.root.querySelector('#appearanceVariantThumbnail').innerHTML = this.thumbnailMarkup(this.currentValue);
   }
 

@@ -331,6 +331,19 @@ em { padding-right: 7px; color: #6f7a85; font-size: 11px; font-style: normal; }
 .sequence-load-track i { display: block; width: 0; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #3da56c, #8ae0ae); transition: width .2s ease; }
 
 .sequence-build-dialog { width: min(520px, calc(100vw - 28px)); padding: 0; border: 1px solid #35423b; border-radius: 16px; color: #e9efeb; background: #111713; box-shadow: 0 30px 100px rgba(0,0,0,.65); }
+.thumbnail-variant-dialog { width: min(460px, calc(100vw - 28px)); padding: 0; border: 1px solid #35423b; border-radius: 16px; color: #e9efeb; background: #111713; box-shadow: 0 30px 100px rgba(0,0,0,.65); }
+.thumbnail-variant-dialog::backdrop { background: rgba(3,6,4,.72); backdrop-filter: blur(8px); }
+.thumbnail-variant-dialog form { padding: 24px; }
+.thumbnail-variant-note { margin: -7px 0 16px; color: #8c9890; font-size: 11px; line-height: 1.65; }
+.thumbnail-variant-options { display: grid; max-height: min(360px, 48vh); gap: 7px; overflow-y: auto; }
+.thumbnail-variant-options button { display: flex; width: 100%; padding: 11px 12px; align-items: center; justify-content: space-between; border: 1px solid #303a34; border-radius: 9px; color: #dce6e0; background: #171d1a; text-align: left; cursor: pointer; }
+.thumbnail-variant-options button > span { display: grid; gap: 3px; }
+.thumbnail-variant-options button small { color: #7f8a83; font-size: 9px; }
+.thumbnail-variant-options button i { visibility: hidden; color: #8de0af; font-style: normal; }
+.thumbnail-variant-options button[aria-checked="true"] { border-color: #68bd8c; background: #19291f; }
+.thumbnail-variant-options button[aria-checked="true"] i { visibility: visible; }
+.thumbnail-variant-actions { display: grid; grid-template-columns: 1fr 1.5fr; gap: 8px; margin-top: 18px; }
+.thumbnail-variant-actions .secondary-button, .thumbnail-variant-actions .primary-button { min-height: 42px; margin: 0; }
 .sequence-build-dialog::backdrop { background: rgba(3,6,4,.72); backdrop-filter: blur(8px); }
 .sequence-build-dialog form { padding: 24px; }
 .build-dialog-heading { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 22px; }

@@ -44,7 +44,7 @@ import {
 import { hasRenderRestorationFailure, renderFixedSizeImage } from './fixed-size-render.js';
 import { ModelLoadingModule } from './model-loading.js';
 import { ModelViewerLoadingAdapter } from './model-viewer-loading-adapter.js';
-import { AppearanceVariantSelector, appearanceVariantTemplate } from './appearance-variants.js';
+import { APPEARANCE_ORIGINAL_VALUE, AppearanceVariantSelector, appearanceOptionMeta, appearanceOptions, appearanceVariantTemplate } from './appearance-variants.js';
 import { readExportDimensionCapability } from './webgl-capabilities.js';
 import { loadSharedCameraFraming, saveSharedCameraFraming } from './shared-camera-framing.js';
 import { applyBuildingCorrection, applyViewerCameraFraming } from './camera-framing-application.js';
@@ -324,6 +324,14 @@ document.querySelector('#app').innerHTML = `
       </div>
     </form>
   </dialog>
+  <dialog class="thumbnail-variant-dialog" id="thumbnailVariantDialog">
+    <form method="dialog">
+      <div class="build-dialog-heading"><div><span class="eyebrow">MODEL COVER</span><h2>选择模型封面外观</h2></div><button id="thumbnailVariantCancel" type="button" aria-label="取消">×</button></div>
+      <p class="thumbnail-variant-note">选择此次生成要使用的外观变体。新封面将替换当前模型封面。</p>
+      <div class="thumbnail-variant-options" id="thumbnailVariantOptions" role="radiogroup" aria-label="模型封面外观"></div>
+      <div class="thumbnail-variant-actions"><button class="secondary-button" id="thumbnailVariantBack" type="button">取消</button><button class="primary-button" id="thumbnailVariantConfirm" type="button">生成并替换封面</button></div>
+    </form>
+  </dialog>
 `;
 
 function controlTemplate(label, id, min, max, step, unit) {
@@ -370,6 +378,7 @@ const verticalShiftControls = [
 ];
 let contextModel = null;
 let contextSequenceTarget = null;
+let pendingThumbnailVariant = null;
 let pendingSequenceBuildIds = [];
 let sequenceJobPoll = 0;
 
@@ -586,7 +595,29 @@ function thumbnailErrorMessage(error) {
   if (error.message === 'MODEL_LOAD_FAILED' || error.message === 'MODEL_TIMEOUT') return '模型载入失败，无法生成缩略图。';
   if (['IMAGE_ENCODE_FAILED', 'IMAGE_SIZE_MISMATCH', 'RENDER_SIZE_MISMATCH', 'EMPTY_RENDER'].includes(error.code ?? error.message)) return '浏览器未能生成 640 × 480 WebP，请检查 WebGL 支持。';
   if (error.message === 'READ_ONLY_CLIENT' || error.status === 403) return '当前设备没有写入权限，请在服务主机上操作。';
+  if (error.code === 'MATERIAL_LOAD_FAILED') return '模型材质加载失败，无法生成完整的缩略图。';
+  if (error.code === 'VARIANT_UNAVAILABLE') return '选择的外观变体已不可用，请重新选择。';
+  if (error.code === 'VARIANT_APPLY_TIMEOUT') return '外观变体应用超时，未生成模型封面。';
   return '缩略图保存失败，请检查模型目录权限和服务日志。';
+}
+
+function chooseThumbnailVariant(options) {
+  const dialog = document.querySelector('#thumbnailVariantDialog');
+  pendingThumbnailVariant = options[0];
+  const displayOptions = appearanceOptions(options.filter((value) => value !== APPEARANCE_ORIGINAL_VALUE));
+  document.querySelector('#thumbnailVariantOptions').innerHTML = displayOptions.map(({ value, label }, index) => {
+    return `<button type="button" role="radio" aria-checked="${index === 0}" data-thumbnail-variant="${escapeHtml(value)}"><span><strong>${escapeHtml(label)}</strong><small>${appearanceOptionMeta(value)}</small></span><i aria-hidden="true">✓</i></button>`;
+  }).join('');
+  dialog.showModal();
+  return new Promise((resolve) => { dialog._resolveVariant = resolve; });
+}
+
+function finishThumbnailVariantChoice(value) {
+  const dialog = document.querySelector('#thumbnailVariantDialog');
+  const resolve = dialog._resolveVariant;
+  dialog._resolveVariant = null;
+  if (dialog.open) dialog.close();
+  resolve?.(value);
 }
 
 async function generateModelThumbnail(model) {
@@ -600,11 +631,15 @@ async function generateModelThumbnail(model) {
     if (appearance.usedBuiltinDefault) showMessage('项目默认光照读取失败，缩略图已使用内置默认光照。', 'error');
     const dataUrl = await createModelThumbnail(model.url, {
       ...appearance,
-    }, state);
+    }, state, { chooseVariant: chooseThumbnailVariant });
     const result = await saveModelThumbnail(model.id, dataUrl);
     model.thumbnailUrl = result.thumbnailUrl;
     showMessage(`已生成 ${result.filename}。`, 'success');
   } catch (error) {
+    if (error.code === 'THUMBNAIL_CANCELLED') {
+      showMessage('已取消生成模型封面。');
+      return;
+    }
     console.error(error);
     showMessage(thumbnailErrorMessage(error), 'error');
   } finally {
@@ -1593,6 +1628,19 @@ library.addEventListener('contextmenu', (event) => {
   if (model) openContextMenu(event, model);
 });
 generateThumbnailButton.addEventListener('click', () => generateModelThumbnail(contextModel));
+document.querySelector('#thumbnailVariantOptions').addEventListener('click', (event) => {
+  const option = event.target.closest('[data-thumbnail-variant]');
+  if (!option) return;
+  pendingThumbnailVariant = option.dataset.thumbnailVariant;
+  document.querySelectorAll('[data-thumbnail-variant]').forEach((button) => button.setAttribute('aria-checked', String(button === option)));
+});
+document.querySelector('#thumbnailVariantConfirm').addEventListener('click', () => finishThumbnailVariantChoice(pendingThumbnailVariant));
+document.querySelector('#thumbnailVariantBack').addEventListener('click', () => finishThumbnailVariantChoice(null));
+document.querySelector('#thumbnailVariantCancel').addEventListener('click', () => finishThumbnailVariantChoice(null));
+document.querySelector('#thumbnailVariantDialog').addEventListener('cancel', (event) => {
+  event.preventDefault();
+  finishThumbnailVariantChoice(null);
+});
 generateSequenceCacheButton.addEventListener('click', () => {
   if (!contextSequenceTarget) return;
   const ids = contextSequenceTarget.type === 'product' ? [contextSequenceTarget.id]
