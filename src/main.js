@@ -1193,19 +1193,19 @@ function updateMinimumRadius(theta = state.theta, phi = state.phi) {
 }
 
 function initializeRadiusControl(radius) {
-  defaultRadius = radius;
+  defaultRadius = roundDistance(radius);
   const radiusRange = document.querySelector('#radiusRange');
   const radiusNumber = document.querySelector('#radiusNumber');
   const step = Number(Math.max(radius / 1000, 0.000001).toPrecision(2));
   radiusCapacity = niceDistanceCeiling(radius * 10);
   radiusRange.max = radiusCapacity;
-  radiusRange.step = step;
+  radiusRange.step = 'any';
   radiusNumber.step = step;
   radiusNumber.disabled = false;
   radiusRange.disabled = false;
   viewer.maxCameraOrbit = `auto 179deg ${radiusCapacity}m`;
   radiusCapacityUpdate = viewer.updateComplete;
-  setControl('radius', roundDistance(radius));
+  setControl('radius', defaultRadius);
 }
 
 async function applyCamera({ immediate = false } = {}) {

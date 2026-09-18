@@ -82,10 +82,14 @@ export function readMaterial(material, normalStrengths = new WeakMap()) {
     baseColor: copy(pbr.baseColorFactor), metallic: pbr.metallicFactor, roughness: pbr.roughnessFactor,
     emissive: copy(material.emissiveFactor), emissiveStrength: material.emissiveStrength,
     doubleSided: material.getDoubleSided(), alphaMode: material.getAlphaMode(),
-    clearcoat: material.clearcoatFactor, clearcoatRoughness: material.clearcoatRoughnessFactor,
-    transmission: material.transmissionFactor, ior: material.ior, thickness: material.thicknessFactor,
-    specular: material.specularFactor, iridescence: material.iridescenceFactor,
-    anisotropy: material.anisotropyStrength,
+    clearcoat: Number.isFinite(material.clearcoatFactor) ? material.clearcoatFactor : 0,
+    clearcoatRoughness: Number.isFinite(material.clearcoatRoughnessFactor) ? material.clearcoatRoughnessFactor : 0,
+    transmission: Number.isFinite(material.transmissionFactor) ? material.transmissionFactor : 0,
+    ior: Number.isFinite(material.ior) ? material.ior : 1,
+    thickness: Number.isFinite(material.thicknessFactor) ? material.thicknessFactor : 0,
+    specular: Number.isFinite(material.specularFactor) ? material.specularFactor : 0,
+    iridescence: Number.isFinite(material.iridescenceFactor) ? material.iridescenceFactor : 0,
+    anisotropy: Number.isFinite(material.anisotropyStrength) ? material.anisotropyStrength : 0,
     ...(material.normalTexture?.texture ? { normalStrength: normalStrengths.get(material) ?? 1 } : {}),
   };
 }
@@ -587,6 +591,16 @@ export class RenderStudio {
     if (!original || !(key in original)) return;
     const parameter = [...studioParameters('material-basic'), ...studioParameters('material-advanced')].find((item) => item.key === key);
     this.updateMaterial(resetStudioParameter({}, original, parameter));
+    if (parameter?.kind === 'number') {
+      const value = original[key];
+      const range = this.root.querySelector(`#${CSS.escape(parameter.id)}`);
+      const number = this.root.querySelector(`[data-number="${parameter.id}"]`);
+      if (range) range.value = value;
+      if (number) number.value = formatStudioParameter(parameter, value);
+    } else if (parameter?.kind === 'color') {
+      const color = this.root.querySelector(`#${CSS.escape(parameter.id)}`);
+      if (color) color.value = toHex(original[key]);
+    }
   }
 
   resetCurrentMaterial() {
