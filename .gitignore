@@ -16,6 +16,7 @@ image_sequence/
 
 # 本地服务状态与日志
 .glb-viewer.pid
+.glb-viewer-stop-requested
 .glb-viewer-*.log
 .vite-*.log
 models/**/*.cover.webp.*.tmp

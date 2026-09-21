@@ -5,6 +5,7 @@ cd /d "%~dp0"
 
 set "PORT=5173"
 set "PID_FILE=.glb-viewer.pid"
+set "STOP_REQUEST_FILE=.glb-viewer-stop-requested"
 set "OUT_LOG=.glb-viewer-output.log"
 set "ERR_LOG=.glb-viewer-error.log"
 set "VITE_CLI=node_modules\vite\bin\vite.js"
@@ -12,6 +13,7 @@ set "START_HELPER=scripts\start-vite.mjs"
 set "RESTART_HELPER=scripts\restart-vite.mjs"
 set "LOCAL_RUNTIME=.runtime\node"
 set "RUNTIME_MANAGER=scripts\manage-local-runtime.ps1"
+set "AUTOSTART_MANAGER=scripts\manage-autostart-task.ps1"
 set "NPM_CONFIG_CACHE=%CD%\.runtime\npm-cache"
 set "NPM_CONFIG_UPDATE_NOTIFIER=false"
 set "NPM_CONFIG_FUND=false"
@@ -33,6 +35,9 @@ echo   [7] 清理构建缓存和日志
 echo   [8] 一键重启局域网服务
 echo   [9] 构建静态部署包
 echo   [10] 预处理环境贴图（1K/2K + 去色）
+echo   [11] 安装开机自启动任务
+echo   [12] 查看开机自启动状态
+echo   [13] 删除开机自启动任务
 echo   [0] 退出
 echo.
 set "CHOICE="
@@ -48,6 +53,9 @@ if "%CHOICE%"=="7" goto clean_runtime
 if "%CHOICE%"=="8" goto restart_service
 if "%CHOICE%"=="9" goto build_static_deployment
 if "%CHOICE%"=="10" goto preprocess_environments
+if "%CHOICE%"=="11" goto install_autostart
+if "%CHOICE%"=="12" goto show_autostart_status
+if "%CHOICE%"=="13" goto remove_autostart
 if "%CHOICE%"=="0" goto end
 echo.
 echo [错误] 无效选项，请重新输入。
@@ -283,6 +291,14 @@ if /i not "!REMOVE_CONFIRM!"=="REMOVE" (
   pause
   goto menu
 )
+if exist "%AUTOSTART_MANAGER%" (
+  powershell -NoProfile -ExecutionPolicy Bypass -File "%AUTOSTART_MANAGER%" -Action Status -ProjectRoot "%CD%" >nul 2>nul
+  if not errorlevel 1 (
+    echo [停止] 当前项目仍安装了开机自启动任务，请先使用菜单 [13] 删除该任务。
+    pause
+    goto menu
+  )
+)
 call :stop_recorded_for_cleanup
 if "!CLEAN_STOP_OK!"=="0" (
   pause
@@ -292,6 +308,7 @@ if exist "node_modules" rmdir /s /q "node_modules"
 if exist "dist" rmdir /s /q "dist"
 if exist ".vite" rmdir /s /q ".vite"
 if exist "%PID_FILE%" del /q "%PID_FILE%" >nul 2>nul
+if exist "%STOP_REQUEST_FILE%" del /q "%STOP_REQUEST_FILE%" >nul 2>nul
 if exist "%OUT_LOG%" del /q "%OUT_LOG%" >nul 2>nul
 if exist "%ERR_LOG%" del /q "%ERR_LOG%" >nul 2>nul
 powershell -NoProfile -ExecutionPolicy Bypass -File "%RUNTIME_MANAGER%" -Action Remove -ProjectRoot "%CD%"
@@ -318,6 +335,7 @@ if not "!RECORDED_PID!"=="!LISTENER_PID!" (
   exit /b
 )
 echo 正在停止本项目服务 PID：!LISTENER_PID! ...
+>"%STOP_REQUEST_FILE%" echo stop
 taskkill /PID !LISTENER_PID! /T /F >nul 2>nul
 powershell -NoProfile -Command "$end=[DateTime]::UtcNow.AddSeconds(3); while(Get-Process -Id !LISTENER_PID! -ErrorAction SilentlyContinue) { if([DateTime]::UtcNow -ge $end) { exit 1 }; Start-Sleep -Milliseconds 80 }"
 if errorlevel 1 (
@@ -385,6 +403,7 @@ if not "!TARGET_PID!"=="!LISTENER_PID!" (
 
 echo.
 echo 正在停止服务 PID：!TARGET_PID! ...
+>"%STOP_REQUEST_FILE%" echo stop
 taskkill /PID !TARGET_PID! /T /F >nul 2>nul
 call :get_listener
 if defined LISTENER_PID (
@@ -417,6 +436,7 @@ echo.
 echo ==================================================
 echo                  一键重启服务
 echo ==================================================
+>"%STOP_REQUEST_FILE%" echo stop
 "!NODE_CMD!" "%RESTART_HELPER%" "%PORT%" "%OUT_LOG%" "%ERR_LOG%" "%PID_FILE%"
 if errorlevel 1 (
   echo.
@@ -486,6 +506,52 @@ echo [FAILED] Environment preprocess failed. See the message above.
 pause
 goto menu
 
+:install_autostart
+call :quick_check
+if "!QUICK_OK!"=="0" (
+  echo.
+  echo [停止] 缺少必要项目文件，请先安装项目运行环境与依赖。
+  echo.
+  pause
+  goto menu
+)
+if not exist "%AUTOSTART_MANAGER%" (
+  echo.
+  echo [失败] 缺少开机自启动管理程序：%AUTOSTART_MANAGER%
+  echo.
+  pause
+  goto menu
+)
+echo.
+powershell -NoProfile -ExecutionPolicy Bypass -File "%AUTOSTART_MANAGER%" -Action Install -ProjectRoot "%CD%" -Port %PORT% -OutputLog "%OUT_LOG%" -ErrorLog "%ERR_LOG%" -PidFile "%PID_FILE%"
+if errorlevel 1 echo [失败] 开机自启动任务安装失败或管理员授权被取消。
+echo.
+pause
+goto menu
+
+:show_autostart_status
+echo.
+if not exist "%AUTOSTART_MANAGER%" (
+  echo [失败] 缺少开机自启动管理程序：%AUTOSTART_MANAGER%
+) else (
+  powershell -NoProfile -ExecutionPolicy Bypass -File "%AUTOSTART_MANAGER%" -Action Status -ProjectRoot "%CD%"
+)
+echo.
+pause
+goto menu
+
+:remove_autostart
+echo.
+if not exist "%AUTOSTART_MANAGER%" (
+  echo [失败] 缺少开机自启动管理程序：%AUTOSTART_MANAGER%
+) else (
+  powershell -NoProfile -ExecutionPolicy Bypass -File "%AUTOSTART_MANAGER%" -Action Remove -ProjectRoot "%CD%"
+  if errorlevel 1 echo [失败] 开机自启动任务删除失败或管理员授权被取消。
+)
+echo.
+pause
+goto menu
+
 :clean_runtime
 echo.
 echo ==================================================
@@ -522,6 +588,7 @@ echo 正在清理可重新生成的运行文件...
 if exist "dist" rmdir /s /q "dist"
 if exist ".vite" rmdir /s /q ".vite"
 if exist "%PID_FILE%" del /q "%PID_FILE%" >nul 2>nul
+if exist "%STOP_REQUEST_FILE%" del /q "%STOP_REQUEST_FILE%" >nul 2>nul
 if exist "%OUT_LOG%" del /q "%OUT_LOG%" >nul 2>nul
 if exist "%ERR_LOG%" del /q "%ERR_LOG%" >nul 2>nul
 
