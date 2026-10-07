@@ -58,6 +58,20 @@ export const models = Object.entries(modelAssets)
   })
   .sort((left, right) => collator.compare(left.id, right.id));
 
+export function folderThumbnailUrl(folderPath, availableModels = models) {
+  const directory = `../models/${folderPath}/`;
+  for (const extension of ['webp', 'png', 'jpg', 'jpeg']) {
+    const cover = coverAssets[`${directory}cover.${extension}`];
+    if (cover) return cover;
+  }
+  const prefix = `${folderPath}/`;
+  return availableModels.find((model) =>
+    model.folderPath === folderPath && model.thumbnailUrl)?.thumbnailUrl
+    ?? availableModels.find((model) =>
+      model.folderPath.startsWith(prefix) && model.thumbnailUrl)?.thumbnailUrl
+    ?? null;
+}
+
 export function libraryEntries(currentFolder = '') {
   const prefix = currentFolder ? `${currentFolder}/` : '';
   const folders = new Set();

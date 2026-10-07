@@ -1,6 +1,6 @@
 import '@google/model-viewer';
 import './style.css';
-import { libraryEntries, models, parentFolder, recentModels } from './model-library.js';
+import { folderThumbnailUrl, libraryEntries, models, parentFolder, recentModels } from './model-library.js';
 import { filterLibraryItems } from './library-search.js';
 import { modelsInFolder, runThumbnailBatch } from './model-thumbnail-batch.js';
 import {
@@ -485,9 +485,12 @@ function renderModelLibrary() {
     </button>`] : []),
     ...entries.folders.map((folder) => {
     const path = state.currentFolder ? `${state.currentFolder}/${folder}` : folder;
-    return `<button class="library-card folder-card" type="button" data-folder="${escapeHtml(path)}" data-thumbnail-folder="${escapeHtml(path)}">
-      <span class="folder-icon" aria-hidden="true"></span>
-      <strong>${escapeHtml(folder)}</strong><small>打开文件夹</small>
+    const thumbnailUrl = folderThumbnailUrl(path, state.models);
+    return `<button class="library-card folder-card${thumbnailUrl ? ' with-cover' : ''}" type="button" data-folder="${escapeHtml(path)}" data-thumbnail-folder="${escapeHtml(path)}">
+      ${thumbnailUrl
+        ? `<span class="thumbnail folder-preview"><img src="${escapeHtml(thumbnailUrl)}" alt="" loading="lazy"><span class="folder-preview-label" aria-hidden="true"><span class="folder-symbol"></span>文件夹</span></span>`
+        : '<span class="folder-icon" aria-hidden="true"></span>'}
+      <strong class="folder-title">${thumbnailUrl ? '<span class="folder-symbol" aria-hidden="true"></span>' : ''}<span class="folder-name">${escapeHtml(folder)}</span></strong><small>打开文件夹</small>
     </button>`;
     }),
   ];

@@ -37,7 +37,10 @@ try {
   assert.equal(saves, 2, '多选的两个模型应串行生成封面');
   await page.locator('#thumbnailBatchStop').click();
 
-  const folder = page.locator('[data-thumbnail-folder]').first();
+  const folder = page.locator('[data-thumbnail-folder="胰岛素笔"]');
+  assert.equal(await folder.locator('.thumbnail img').count(), 1, '已有模型封面的文件夹应显示缩略图');
+  assert.match(await folder.locator('.thumbnail img').getAttribute('src'), /\.cover\.webp/, '文件夹缩略图应使用模型封面');
+  assert.equal(await folder.locator('.folder-preview-label').textContent(), '文件夹', '封面上应明确标识文件夹');
   await folder.dispatchEvent('contextmenu', { clientX: 240, clientY: 320 });
   assert.equal(await page.locator('#generateThumbnail').textContent(), '递归生成此文件夹封面');
   await page.locator('#generateThumbnail').click();
