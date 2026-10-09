@@ -192,6 +192,7 @@ document.querySelector('#app').innerHTML = `
               <button id="clearLibrarySearch" type="button" aria-label="清空搜索" hidden>×</button>
             </label>
             <span class="library-count" id="libraryCount" aria-live="polite"></span>
+            <span class="library-selection-hint" id="librarySelectionHint" hidden>拖动空白区域即可框选</span>
           </div>
           <nav class="breadcrumbs" id="breadcrumbs" aria-label="模型文件夹路径"></nav>
           <div class="library-grid" id="libraryGrid"></div>
@@ -408,6 +409,12 @@ let pendingThumbnailVariant = null;
 let pendingThumbnailBatchModels = [];
 let pendingSequenceBuildIds = [];
 let sequenceJobPoll = 0;
+let selectionDrag = null;
+let selectionDragClickBlock = false;
+const selectionBox = document.createElement('div');
+selectionBox.className = 'library-selection-box';
+selectionBox.hidden = true;
+document.body.append(selectionBox);
 
 function setCameraControlsDisabled(disabled) {
   for (const control of cameraControls) control.disabled = disabled;
@@ -447,6 +454,12 @@ function updateLibrarySearch(mode, visibleCount, totalCount) {
     : `共 ${totalCount} 项`;
 }
 
+function updateSelectionHint(active) {
+  const hint = document.querySelector('#librarySelectionHint');
+  hint.hidden = !active;
+  hint.textContent = active ? '拖动空白区域即可框选 · Shift 可追加选择' : '';
+}
+
 function renderModelLibrary() {
   if (state.mode === 'sequence') {
     renderSequenceLibrary();
@@ -463,6 +476,7 @@ function renderModelLibrary() {
   batchBuild.hidden = !state.modelSelectionMode;
   batchBuild.textContent = `生成已选 (${state.selectedModelIds.size})`;
   batchBuild.disabled = !state.selectedModelIds.size || !state.thumbnailWritable || state.thumbnailBatchRunning;
+  updateSelectionHint(state.modelSelectionMode);
   document.querySelector('#closeLibrary').disabled = !state.selectedModel;
   const searching = Boolean(state.libraryQuery.trim());
   const entries = searching
@@ -529,6 +543,7 @@ function renderSequenceLibrary() {
   batchBuild.hidden = !state.sequenceSelectionMode;
   batchBuild.textContent = `构建已选 (${state.selectedSequenceIds.size})`;
   batchBuild.disabled = !state.selectedSequenceIds.size || !sequenceWritable || state.sequenceJobRunning;
+  updateSelectionHint(state.sequenceSelectionMode);
   document.querySelector('#closeLibrary').disabled = !state.selectedSequence;
   const searching = Boolean(state.libraryQuery.trim());
   const entries = searching
@@ -1699,7 +1714,99 @@ document.querySelector('#clearLibrarySearch').addEventListener('click', () => {
   document.querySelector('#librarySearch').focus();
 });
 document.querySelectorAll('[data-mode]').forEach((button) => button.addEventListener('click', () => switchMode(button.dataset.mode)));
+
+function selectionModeActive() {
+  return state.mode === 'model' ? state.modelSelectionMode : state.sequenceSelectionMode;
+}
+
+function selectionSet() {
+  return state.mode === 'model' ? state.selectedModelIds : state.selectedSequenceIds;
+}
+
+function cardSelectionId(card) {
+  return state.mode === 'model' ? card.dataset.modelId : card.dataset.sequenceId;
+}
+
+function selectionCards() {
+  const selector = state.mode === 'model' ? '[data-model-id]' : '[data-sequence-id]';
+  return [...libraryGrid.querySelectorAll(selector)];
+}
+
+function updateSelectionDrag(event) {
+  if (!selectionDrag) return;
+  if (!selectionDrag.moved) {
+    const distance = Math.hypot(event.clientX - selectionDrag.startX, event.clientY - selectionDrag.startY);
+    if (distance < 5) return;
+    selectionDrag.moved = true;
+  }
+  event.preventDefault();
+  const left = Math.min(selectionDrag.startX, event.clientX);
+  const top = Math.min(selectionDrag.startY, event.clientY);
+  const width = Math.abs(event.clientX - selectionDrag.startX);
+  const height = Math.abs(event.clientY - selectionDrag.startY);
+  selectionBox.style.left = `${left}px`;
+  selectionBox.style.top = `${top}px`;
+  selectionBox.style.width = `${width}px`;
+  selectionBox.style.height = `${height}px`;
+  const dragRect = { left, top, right: left + width, bottom: top + height };
+  const cards = selectionCards();
+  const next = new Set(selectionDrag.baseSelection);
+  const intersectingIds = new Set();
+  for (const card of cards) {
+    const rect = card.getBoundingClientRect();
+    const intersects = rect.left < dragRect.right && rect.right > dragRect.left &&
+      rect.top < dragRect.bottom && rect.bottom > dragRect.top;
+    if (!intersects) continue;
+    intersectingIds.add(cardSelectionId(card));
+    next.add(cardSelectionId(card));
+  }
+  if (!selectionDrag.additive) {
+    for (const id of selectionDrag.baseSelection) {
+      if (!intersectingIds.has(id)) next.delete(id);
+    }
+  }
+  selectionSet().clear();
+  next.forEach((id) => selectionSet().add(id));
+  if (state.mode === 'model') renderModelLibrary();
+  else renderSequenceLibrary();
+}
+
+function finishSelectionDrag() {
+  if (!selectionDrag) return;
+  document.removeEventListener('pointermove', updateSelectionDrag);
+  document.removeEventListener('pointerup', finishSelectionDrag);
+  selectionBox.hidden = true;
+  libraryGrid.classList.remove('is-selecting');
+  selectionDragClickBlock = selectionDrag.moved;
+  if (selectionDragClickBlock) setTimeout(() => { selectionDragClickBlock = false; }, 0);
+  selectionDrag = null;
+}
+
+libraryGrid.addEventListener('pointerdown', (event) => {
+  if (!selectionModeActive() || event.button !== 0 || event.target.closest('input, a')) return;
+  selectionDrag = {
+    startX: event.clientX,
+    startY: event.clientY,
+    baseSelection: new Set(selectionSet()),
+    additive: event.shiftKey,
+    moved: false,
+  };
+  selectionBox.hidden = false;
+  selectionBox.style.left = `${event.clientX}px`;
+  selectionBox.style.top = `${event.clientY}px`;
+  selectionBox.style.width = '0px';
+  selectionBox.style.height = '0px';
+  libraryGrid.classList.add('is-selecting');
+  document.addEventListener('pointermove', updateSelectionDrag);
+  document.addEventListener('pointerup', finishSelectionDrag);
+});
+
 library.addEventListener('click', (event) => {
+  if (selectionDragClickBlock) {
+    event.preventDefault();
+    event.stopPropagation();
+    return;
+  }
   const sequenceFolderButton = event.target.closest('[data-sequence-folder]');
   if (sequenceFolderButton) {
     state.sequenceFolder = sequenceFolderButton.dataset.sequenceFolder;
