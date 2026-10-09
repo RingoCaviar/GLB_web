@@ -523,7 +523,7 @@ function renderModelLibrary() {
       ? `<img src="${escapeHtml(model.thumbnailUrl)}" alt="" loading="lazy">`
       : '<span class="model-placeholder" aria-hidden="true">3D</span>'}</span>
     ${generating ? '<span class="thumbnail-busy">生成中…</span>' : ''}
-    <span class="sequence-checkbox">${state.selectedModelIds.has(model.id) ? '✓' : ''}</span>
+    ${state.selectedModelIds.has(model.id) ? '<span class="sequence-checkbox" aria-label="已选择">✓</span>' : ''}
     <strong>${escapeHtml(model.name)}</strong><small>${escapeHtml(model.folderPath || 'models')}</small>
   </button>`;
   };
