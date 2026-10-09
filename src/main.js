@@ -63,8 +63,8 @@ const state = {
   fov: sharedCameraFraming.fov,
   verticalShift: sharedCameraFraming.verticalShift,
   buildingCorrection: sharedCameraFraming.buildingCorrection,
-  width: 2048,
-  height: 2048,
+  width: 4096,
+  height: 4096,
   maximumExportDimension: 8192,
   transparent: false,
   preserveShadow: false,
@@ -162,7 +162,7 @@ document.querySelector('#app').innerHTML = `
             </div>
           </div>
           <div class="frame-outline" aria-hidden="true"></div>
-          <div class="frame-label" id="frameLabel">2048 × 2048 · 1:1</div>
+          <div class="frame-label" id="frameLabel">4096 × 4096 · 1:1</div>
           <div class="sequence-toolbar" id="sequenceToolbar" hidden>
             <button type="button" id="sequencePlay" aria-pressed="false"><span>▶</span> 自动旋转</button>
             <i></i>
@@ -206,8 +206,8 @@ document.querySelector('#app').innerHTML = `
       <section class="panel-section export-section">
         <div class="section-heading"><span>01</span><h2>导出图片</h2></div>
         <div class="dimension-grid">
-          <label>宽度 <span><input id="exportWidth" type="number" min="64" max="8192" value="2048"><em>px</em><button class="parameter-reset" id="resetExportWidth" type="button" aria-label="重置导出宽度" title="重置导出宽度">↶</button></span></label>
-          <label>高度 <span><input id="exportHeight" type="number" min="64" max="8192" value="2048"><em>px</em><button class="parameter-reset" id="resetExportHeight" type="button" aria-label="重置导出高度" title="重置导出高度">↶</button></span></label>
+          <label>宽度 <span><input id="exportWidth" type="number" min="64" max="8192" value="4096"><em>px</em><button class="parameter-reset" id="resetExportWidth" type="button" aria-label="重置导出宽度" title="重置导出宽度">↶</button></span></label>
+          <label>高度 <span><input id="exportHeight" type="number" min="64" max="8192" value="4096"><em>px</em><button class="parameter-reset" id="resetExportHeight" type="button" aria-label="重置导出高度" title="重置导出高度">↶</button></span></label>
         </div>
         <p class="export-capability" id="exportCapability" aria-live="polite"></p>
         <div class="presets" aria-label="常用分辨率">
@@ -236,7 +236,7 @@ document.querySelector('#app').innerHTML = `
           <input id="preserveShadowToggle" type="checkbox" role="switch" disabled><i></i>
         </label>
         <button class="primary-button" id="exportButton" type="button" disabled>
-          <span class="button-label">导出 PNG</span><span class="button-meta">2048 × 2048</span>
+          <span class="button-label">导出 PNG</span><span class="button-meta">4096 × 4096</span>
         </button>
         <p class="message" id="message" aria-live="polite"></p>
       </section>
@@ -516,7 +516,7 @@ function renderModelLibrary() {
       ? `<img src="${escapeHtml(model.thumbnailUrl)}" alt="" loading="lazy">`
       : '<span class="model-placeholder" aria-hidden="true">3D</span>'}</span>
     ${generating ? '<span class="thumbnail-busy">生成中…</span>' : ''}
-    <span class="sequence-checkbox selection-indicator" aria-label="已选择">✓</span>
+    <span class="sequence-checkbox selection-indicator" aria-label="已选择"${state.selectedModelIds.has(model.id) ? '' : ' hidden'}>✓</span>
     <strong>${escapeHtml(model.name)}</strong><small>${escapeHtml(model.folderPath || 'models')}</small>
   </button>`;
   };
@@ -1578,8 +1578,8 @@ function updateDimensions({ commit = true } = {}) {
     button.classList.toggle('active', button.dataset.size === `${state.width}x${state.height}`);
   });
   updateFramingGuide();
-  document.querySelector('#resetExportWidth').disabled = state.width === 2048;
-  document.querySelector('#resetExportHeight').disabled = state.height === 2048;
+  document.querySelector('#resetExportWidth').disabled = state.width === 4096;
+  document.querySelector('#resetExportHeight').disabled = state.height === 4096;
 }
 
 function applySupportedDrawingBufferSize({ width, height }) {
@@ -1598,8 +1598,8 @@ document.querySelectorAll('[data-size]').forEach((button) => button.addEventList
   heightInput.value = height;
   updateDimensions();
 }));
-document.querySelector('#resetExportWidth').addEventListener('click', () => { widthInput.value = 2048; updateDimensions(); });
-document.querySelector('#resetExportHeight').addEventListener('click', () => { heightInput.value = 2048; updateDimensions(); });
+document.querySelector('#resetExportWidth').addEventListener('click', () => { widthInput.value = 4096; updateDimensions(); });
+document.querySelector('#resetExportHeight').addEventListener('click', () => { heightInput.value = 4096; updateDimensions(); });
 updateDimensions();
 new ResizeObserver(updateFramingGuide).observe(shell);
 
