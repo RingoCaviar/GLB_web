@@ -520,7 +520,7 @@ function renderModelLibrary() {
       ? `<img src="${escapeHtml(model.thumbnailUrl)}" alt="" loading="lazy">`
       : '<span class="model-placeholder" aria-hidden="true">3D</span>'}</span>
     ${generating ? '<span class="thumbnail-busy">生成中…</span>' : ''}
-    ${state.selectedModelIds.has(model.id) ? '<span class="sequence-checkbox" aria-label="已选择">✓</span>' : ''}
+    <span class="sequence-checkbox selection-indicator" aria-label="已选择">✓</span>
     <strong>${escapeHtml(model.name)}</strong><small>${escapeHtml(model.folderPath || 'models')}</small>
   </button>`;
   };
@@ -1739,6 +1739,15 @@ function selectionCards() {
   return [...libraryGrid.querySelectorAll(selector)];
 }
 
+function updateSelectionVisuals() {
+  const selected = selectionSet();
+  for (const card of selectionCards()) {
+    const active = selected.has(cardSelectionId(card));
+    card.classList.toggle('batch-selected', active);
+    card.querySelector('.selection-indicator')?.toggleAttribute('hidden', !active);
+  }
+}
+
 function updateSelectionDrag(event) {
   if (!selectionDrag) return;
   if (!selectionDrag.moved) {
@@ -1756,11 +1765,10 @@ function updateSelectionDrag(event) {
   selectionBox.style.width = `${width}px`;
   selectionBox.style.height = `${height}px`;
   const dragRect = { left, top, right: left + width, bottom: top + height };
-  const cards = selectionCards();
+  const cards = selectionDrag.cards;
   const next = new Set(selectionDrag.baseSelection);
   const intersectingIds = new Set();
-  for (const card of cards) {
-    const rect = card.getBoundingClientRect();
+  for (const { card, rect } of cards) {
     const intersects = rect.left < dragRect.right && rect.right > dragRect.left &&
       rect.top < dragRect.bottom && rect.bottom > dragRect.top;
     if (!intersects) continue;
@@ -1774,7 +1782,7 @@ function updateSelectionDrag(event) {
   }
   selectionSet().clear();
   next.forEach((id) => selectionSet().add(id));
-  if (state.mode === 'model') renderModelLibrary();
+  if (state.mode === 'model') updateSelectionVisuals();
   else renderSequenceLibrary();
 }
 
@@ -1796,6 +1804,7 @@ libraryGrid.addEventListener('pointerdown', (event) => {
     startY: event.clientY,
     baseSelection: new Set(selectionSet()),
     additive: event.shiftKey || event.ctrlKey || event.metaKey,
+    cards: selectionCards().map((card) => ({ card, rect: card.getBoundingClientRect() })),
     moved: false,
   };
   selectionBox.hidden = false;
