@@ -177,12 +177,9 @@ document.querySelector('#app').innerHTML = `
         </div>
         <div class="gesture-tip" id="gestureTip">左键旋转 · 滚轮/双指缩放 · 右键平移</div>
         <section class="model-library" id="modelLibrary" aria-label="模型库">
-          <div class="library-header">
-            <div class="library-header-actions">
-              <button class="library-batch-button" id="sequenceBatchMode" type="button" hidden>批量选择</button>
-              <button class="library-batch-button primary" id="sequenceBatchBuild" type="button" hidden>构建已选 (0)</button>
-              <button class="library-close" id="closeLibrary" type="button" aria-label="关闭模型库">×</button>
-            </div>
+          <div class="library-header-actions" hidden>
+            <button class="library-batch-button" id="sequenceBatchMode" type="button">批量选择</button>
+            <button class="library-batch-button primary" id="sequenceBatchBuild" type="button">构建已选 (0)</button>
           </div>
           <div class="library-tools">
             <label class="library-search" for="librarySearch">
@@ -482,7 +479,6 @@ function renderModelLibrary() {
   batchBuild.textContent = `生成已选 (${state.selectedModelIds.size})`;
   batchBuild.disabled = !state.selectedModelIds.size || !state.thumbnailWritable || state.thumbnailBatchRunning;
   updateSelectionHint(true);
-  document.querySelector('#closeLibrary').disabled = !state.selectedModel;
   const searching = Boolean(state.libraryQuery.trim());
   const entries = searching
     ? { folders: [], models: filterLibraryItems(state.models, state.libraryQuery) }
@@ -545,7 +541,6 @@ function renderSequenceLibrary() {
   batchBuild.textContent = `构建已选 (${state.selectedSequenceIds.size})`;
   batchBuild.disabled = !state.selectedSequenceIds.size || !sequenceWritable || state.sequenceJobRunning;
   updateSelectionHint(state.sequenceSelectionMode);
-  document.querySelector('#closeLibrary').disabled = !state.selectedSequence;
   const searching = Boolean(state.libraryQuery.trim());
   const entries = searching
     ? { folders: [], products: filterLibraryItems(sequenceProducts, state.libraryQuery) }
@@ -1710,7 +1705,6 @@ async function readImageDimensions(blob) {
 exportButton.addEventListener('click', exportImage);
 
 document.querySelector('#openLibrary').addEventListener('click', openModelLibrary);
-document.querySelector('#closeLibrary').addEventListener('click', closeModelLibrary);
 document.querySelector('#librarySearch').addEventListener('input', (event) => {
   state.libraryQuery = event.target.value;
   renderModelLibrary();

@@ -30,10 +30,9 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .mode-switch button { padding: 6px 11px; border: 0; border-radius: 999px; color: #77818b; background: transparent; cursor: pointer; font-size: 11px; font-weight: 650; transition: color .18s ease, background .18s ease, box-shadow .18s ease; }
 .mode-switch button:hover { color: #c5d0d7; }
 .mode-switch button.active { color: #bdf0d2; background: #1d3e2b; box-shadow: 0 4px 14px rgba(0,0,0,.22), inset 0 0 0 1px rgba(121,216,162,.18); }
-.library-button, .library-close { border: 1px solid #303740; color: #c7d0d8; background: #151a20; cursor: pointer; }
+.library-button { border: 1px solid #303740; color: #c7d0d8; background: #151a20; cursor: pointer; }
 .library-button { padding: 8px 12px; border-radius: 999px; font-size: 12px; }
-.library-button:hover, .library-close:hover { border-color: #72d29b; color: #a9e7c4; }
-.library-close:disabled { opacity: .3; cursor: default; }
+.library-button:hover { border-color: #72d29b; color: #a9e7c4; }
 .eyebrow { display: block; margin-bottom: 5px; color: #7f8994; font-size: 10px; font-weight: 700; letter-spacing: .22em; }
 h1 { margin: 0; font-size: clamp(23px, 2.5vw, 34px); font-weight: 650; letter-spacing: -.04em; }
 .status-pill { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border: 1px solid #2b3139; border-radius: 999px; color: #9ca5af; background: #12161b; font-size: 12px; }
@@ -85,7 +84,6 @@ model-viewer { display: block; width: 100%; height: 100%; min-width: 0; min-heig
 .model-library[hidden] { display: none; }
 .library-header { display: flex; min-height: 36px; align-items: center; justify-content: flex-end; }
 .library-header-actions { display: flex; align-items: center; gap: 8px; }
-.library-close { display: grid; width: 36px; height: 36px; padding: 0; place-items: center; border-radius: 50%; font-size: 24px; line-height: 1; }
 .library-batch-button { padding: 8px 11px; border: 1px solid #303a34; border-radius: 8px; color: #a9b6af; background: #171d1a; cursor: pointer; font-size: 10px; }
 .library-batch-button:hover, .library-batch-button.active { border-color: #5eaa7d; color: #bdebcf; }
 .library-batch-button.primary { color: #0c1d13; background: #7ad6a1; font-weight: 700; }
