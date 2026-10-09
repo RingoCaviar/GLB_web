@@ -1841,9 +1841,15 @@ library.addEventListener('click', (event) => {
   if (modelButton) {
     const model = state.models.find((item) => item.id === modelButton.dataset.modelId);
     if (state.mode === 'model') {
-      if (state.selectedModelIds.has(model.id)) state.selectedModelIds.delete(model.id);
-      else state.selectedModelIds.add(model.id);
-      renderModelLibrary();
+      // A plain click keeps the primary library action discoverable: open the
+      // model. Modifier-click is the explicit additive/toggle selection path.
+      if (event.ctrlKey || event.metaKey || event.shiftKey) {
+        if (state.selectedModelIds.has(model.id)) state.selectedModelIds.delete(model.id);
+        else state.selectedModelIds.add(model.id);
+        renderModelLibrary();
+      } else {
+        selectModel(model);
+      }
     } else selectModel(model);
   }
 });
