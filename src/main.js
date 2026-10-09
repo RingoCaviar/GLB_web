@@ -47,7 +47,7 @@ import { ModelLoadingModule } from './model-loading.js';
 import { ModelViewerLoadingAdapter } from './model-viewer-loading-adapter.js';
 import { APPEARANCE_ORIGINAL_VALUE, AppearanceVariantSelector, appearanceOptionMeta, appearanceOptions, appearanceVariantTemplate } from './appearance-variants.js';
 import { readExportDimensionCapability } from './webgl-capabilities.js';
-import { loadSharedCameraFraming, saveSharedCameraFraming } from './shared-camera-framing.js';
+import { DEFAULT_SHARED_CAMERA_FRAMING, loadSharedCameraFraming, saveSharedCameraFraming } from './shared-camera-framing.js';
 import { applyBuildingCorrection, applyViewerCameraFraming } from './camera-framing-application.js';
 import { applyVerticalLensShift, verticalLensShiftCapability } from './vertical-lens-shift.js';
 
@@ -137,7 +137,7 @@ document.querySelector('#app').innerHTML = `
           disable-tap
           touch-action="pan-y"
           camera-orbit="0deg 75deg 105%"
-          field-of-view="45deg"
+          field-of-view="${DEFAULT_SHARED_CAMERA_FRAMING.fov}deg"
           min-field-of-view="10deg"
           max-field-of-view="90deg"
           min-camera-orbit="auto 1deg 0.000001m"
@@ -377,6 +377,8 @@ const modelLoadingOverlay = document.querySelector('#modelLoadingOverlay');
 const modelLoadingText = document.querySelector('#modelLoadingText');
 const exportButton = document.querySelector('#exportButton');
 const message = document.querySelector('#message');
+const workspace = document.querySelector('.workspace');
+const controlPanel = document.querySelector('.panel');
 const library = document.querySelector('#modelLibrary');
 const libraryGrid = document.querySelector('#libraryGrid');
 const breadcrumbs = document.querySelector('#breadcrumbs');
@@ -388,6 +390,14 @@ const renderStudio = new RenderStudio(viewer, document.querySelector('#renderStu
 const appearanceVariantSelector = new AppearanceVariantSelector(viewer, document.querySelector('#appearanceVariants'));
 const sequenceRoot = document.querySelector('#sequenceViewer');
 const sequenceViewer = new SequenceViewer(sequenceRoot);
+
+function syncLibraryLayout() {
+  const open = state.modelLibraryOpen;
+  workspace.classList.toggle('library-open', open);
+  controlPanel.hidden = open;
+}
+
+syncLibraryLayout();
 // Keep the fixed-position menu outside the filtered/clipped library overlay.
 // Chromium otherwise treats the overlay as its containing block, while the
 // pointer coordinates below are relative to the viewport.
@@ -470,13 +480,11 @@ function renderModelLibrary() {
   library.setAttribute('aria-label', '模型库');
   const batchMode = document.querySelector('#sequenceBatchMode');
   const batchBuild = document.querySelector('#sequenceBatchBuild');
-  batchMode.hidden = false;
-  batchMode.textContent = state.modelSelectionMode ? '退出批量' : '批量选择';
-  batchMode.classList.toggle('active', state.modelSelectionMode);
-  batchBuild.hidden = !state.modelSelectionMode;
+  batchMode.hidden = true;
+  batchBuild.hidden = true;
   batchBuild.textContent = `生成已选 (${state.selectedModelIds.size})`;
   batchBuild.disabled = !state.selectedModelIds.size || !state.thumbnailWritable || state.thumbnailBatchRunning;
-  updateSelectionHint(state.modelSelectionMode);
+  updateSelectionHint(true);
   document.querySelector('#closeLibrary').disabled = !state.selectedModel;
   const searching = Boolean(state.libraryQuery.trim());
   const entries = searching
@@ -515,7 +523,7 @@ function renderModelLibrary() {
       ? `<img src="${escapeHtml(model.thumbnailUrl)}" alt="" loading="lazy">`
       : '<span class="model-placeholder" aria-hidden="true">3D</span>'}</span>
     ${generating ? '<span class="thumbnail-busy">生成中…</span>' : ''}
-    ${state.modelSelectionMode ? `<span class="sequence-checkbox">${state.selectedModelIds.has(model.id) ? '✓' : ''}</span>` : ''}
+    <span class="sequence-checkbox">${state.selectedModelIds.has(model.id) ? '✓' : ''}</span>
     <strong>${escapeHtml(model.name)}</strong><small>${escapeHtml(model.folderPath || 'models')}</small>
   </button>`;
   };
@@ -537,10 +545,8 @@ function renderSequenceLibrary() {
   library.setAttribute('aria-label', '360度产品库');
   const batchMode = document.querySelector('#sequenceBatchMode');
   const batchBuild = document.querySelector('#sequenceBatchBuild');
-  batchMode.hidden = false;
-  batchMode.textContent = state.sequenceSelectionMode ? '退出批量' : '批量选择';
-  batchMode.classList.toggle('active', state.sequenceSelectionMode);
-  batchBuild.hidden = !state.sequenceSelectionMode;
+  batchMode.hidden = true;
+  batchBuild.hidden = true;
   batchBuild.textContent = `构建已选 (${state.selectedSequenceIds.size})`;
   batchBuild.disabled = !state.selectedSequenceIds.size || !sequenceWritable || state.sequenceJobRunning;
   updateSelectionHint(state.sequenceSelectionMode);
@@ -591,13 +597,15 @@ function openContextMenu(event, model) {
   generateSequenceCacheButton.hidden = true;
   generateThumbnailButton.disabled = !state.thumbnailCapabilityReady ||
     !state.thumbnailWritable || state.thumbnailGeneratingId !== null;
-  generateThumbnailButton.textContent = state.thumbnailGeneratingId === model.id
+  generateThumbnailButton.textContent = state.selectedModelIds.size > 1
+    ? `为已选 ${state.selectedModelIds.size} 个生成缩略图`
+    : state.thumbnailGeneratingId === model.id
     ? '正在生成缩略图…'
     : '自动生成缩略图';
   contextMenuHint.textContent = !state.thumbnailCapabilityReady
     ? '正在检查本机写入权限…'
     : state.thumbnailWritable
-      ? '固定 640 × 480 · 默认视角 · 直接覆盖'
+      ? `${state.selectedModelIds.size > 1 ? `已选 ${state.selectedModelIds.size} 个 · ` : ''}固定 640 × 480 · 当前预览视角`
       : '当前设备只读；请在服务主机上操作';
   contextMenu.hidden = false;
   contextMenu.style.left = '0px';
@@ -773,6 +781,7 @@ async function startThumbnailBatch() {
 
 function openModelLibrary() {
   state.modelLibraryOpen = true;
+  syncLibraryLayout();
   library.hidden = false;
   renderModelLibrary();
   if (state.mode === 'sequence') reloadSequenceLibrary();
@@ -781,6 +790,7 @@ function openModelLibrary() {
 function closeModelLibrary() {
   if (state.mode === 'model' ? !state.selectedModel : !state.selectedSequence) return;
   state.modelLibraryOpen = false;
+  syncLibraryLayout();
   library.hidden = true;
 }
 
@@ -836,6 +846,7 @@ async function selectSequence(product) {
   }
   state.selectedSequence = product;
   state.modelLibraryOpen = false;
+  syncLibraryLayout();
   library.hidden = true;
   document.querySelector('#sequenceToolbar').hidden = false;
   document.querySelector('#sequenceDownload').disabled = true;
@@ -1101,6 +1112,7 @@ async function selectModel(model) {
   const snapshot = modelLoading.getSnapshot();
   state.selectedModel = snapshot.model;
   state.modelLibraryOpen = false;
+  syncLibraryLayout();
   library.hidden = true;
   errorBox.hidden = true;
   setModelLoading(true, model.name);
@@ -1429,7 +1441,7 @@ async function focusModel() {
   setControl('theta', 0);
   setControl('phi', 75);
   if (defaultRadius !== null) setControl('radius', roundDistance(defaultRadius));
-  setControl('fov', 45);
+  setControl('fov', DEFAULT_SHARED_CAMERA_FRAMING.fov);
   await applyCamera({ immediate: true });
   showMessage('已聚焦模型。', 'success');
 }
@@ -1453,7 +1465,7 @@ document.querySelector('#resetCamera').addEventListener('click', async () => {
   setControl('theta', 0);
   setControl('phi', 75);
   if (defaultRadius !== null) setControl('radius', roundDistance(defaultRadius));
-  setControl('fov', 45);
+  setControl('fov', DEFAULT_SHARED_CAMERA_FRAMING.fov);
   setControl('verticalShift', 0);
   state.buildingCorrection = false;
   document.querySelector('#buildingCorrection').checked = false;
@@ -1473,7 +1485,7 @@ document.querySelector('#buildingCorrection').addEventListener('change', async (
 });
 
 function cameraDefaults() {
-  return { theta: 0, phi: 75, radius: defaultRadius ?? state.radius, fov: 45, verticalShift: 0 };
+  return { theta: 0, phi: 75, radius: defaultRadius ?? state.radius, fov: DEFAULT_SHARED_CAMERA_FRAMING.fov, verticalShift: 0 };
 }
 for (const button of document.querySelectorAll('[data-camera-reset]')) {
   button.addEventListener('click', async () => {
@@ -1716,7 +1728,7 @@ document.querySelector('#clearLibrarySearch').addEventListener('click', () => {
 document.querySelectorAll('[data-mode]').forEach((button) => button.addEventListener('click', () => switchMode(button.dataset.mode)));
 
 function selectionModeActive() {
-  return state.mode === 'model' ? state.modelSelectionMode : state.sequenceSelectionMode;
+  return state.mode === 'model' ? true : state.sequenceSelectionMode;
 }
 
 function selectionSet() {
@@ -1788,7 +1800,7 @@ libraryGrid.addEventListener('pointerdown', (event) => {
     startX: event.clientX,
     startY: event.clientY,
     baseSelection: new Set(selectionSet()),
-    additive: event.shiftKey,
+    additive: event.shiftKey || event.ctrlKey || event.metaKey,
     moved: false,
   };
   selectionBox.hidden = false;
@@ -1828,11 +1840,25 @@ library.addEventListener('click', (event) => {
   const modelButton = event.target.closest('[data-model-id]');
   if (modelButton) {
     const model = state.models.find((item) => item.id === modelButton.dataset.modelId);
-    if (state.modelSelectionMode) {
+    if (state.mode === 'model') {
       if (state.selectedModelIds.has(model.id)) state.selectedModelIds.delete(model.id);
       else state.selectedModelIds.add(model.id);
       renderModelLibrary();
     } else selectModel(model);
+  }
+});
+library.addEventListener('dblclick', (event) => {
+  const modelButton = event.target.closest('[data-model-id]');
+  if (!modelButton || state.mode !== 'model') return;
+  const model = state.models.find((item) => item.id === modelButton.dataset.modelId);
+  if (model) selectModel(model);
+});
+library.addEventListener('pointerdown', (event) => {
+  if (event.button !== 0 || event.target.closest('[data-model-id], [data-folder], [data-sequence-id], [data-sequence-folder]')) return;
+  if (selectionModeActive()) {
+    selectionSet().clear();
+    if (state.mode === 'model') renderModelLibrary();
+    else renderSequenceLibrary();
   }
 });
 library.addEventListener('contextmenu', (event) => {
@@ -1851,10 +1877,18 @@ library.addEventListener('contextmenu', (event) => {
   event.preventDefault();
   if (modelFolder) { openModelFolderContextMenu(event, modelFolder.dataset.thumbnailFolder); return; }
   const model = state.models.find((item) => item.id === modelCard.dataset.modelId);
-  if (model) openContextMenu(event, model);
+  if (model) {
+    if (!state.selectedModelIds.has(model.id)) {
+      state.selectedModelIds.clear();
+      state.selectedModelIds.add(model.id);
+      renderModelLibrary();
+    }
+    openContextMenu(event, model);
+  }
 });
 generateThumbnailButton.addEventListener('click', () => {
   if (contextModelFolder !== null) openThumbnailBatchDialog(modelsInFolder(state.models, contextModelFolder));
+  else if (state.selectedModelIds.size > 1) openThumbnailBatchDialog(state.models.filter((model) => state.selectedModelIds.has(model.id)));
   else generateModelThumbnail(contextModel);
 });
 document.querySelector('#thumbnailVariantOptions').addEventListener('click', (event) => {

@@ -12,10 +12,11 @@ assert.deepEqual(resolveThumbnailCameraFraming({
   fov: 38,
   verticalShift: 0.25,
   buildingCorrection: true,
+  radius: 3.5,
 }), {
   theta: 32,
   phi: 90,
-  radius: 'auto',
+  radius: 3.5,
   fov: 38,
   verticalShift: 0.25,
   buildingCorrection: true,
@@ -29,6 +30,8 @@ assert.deepEqual(resolveThumbnailCameraFraming(null), {
   verticalShift: 0,
   buildingCorrection: false,
 });
+
+assert.equal(resolveThumbnailCameraFraming({ fov: 38 }).radius, 'auto');
 
 console.log('thumbnail camera framing tests passed');
 

@@ -1,17 +1,13 @@
-import { sanitizeSharedCameraFraming } from './shared-camera-framing.js';
-
-const DEFAULT_THUMBNAIL_CAMERA_FRAMING = Object.freeze({
-  theta: 0,
-  phi: 75,
-  fov: 45,
-  verticalShift: 0,
-  buildingCorrection: false,
-});
+import { DEFAULT_SHARED_CAMERA_FRAMING, sanitizeSharedCameraFraming } from './shared-camera-framing.js';
 
 export function resolveThumbnailCameraFraming(sharedCameraFraming) {
   const framing = sanitizeSharedCameraFraming(sharedCameraFraming)
-    ?? DEFAULT_THUMBNAIL_CAMERA_FRAMING;
-  return { ...framing, radius: 'auto' };
+    ?? DEFAULT_SHARED_CAMERA_FRAMING;
+  // Keep the live preview distance when available so the generated cover has
+  // the same subject scale as the preview. Older callers may omit radius;
+  // those continue to use model-viewer's automatic framing.
+  const radius = Number(sharedCameraFraming?.radius);
+  return { ...framing, radius: Number.isFinite(radius) && radius > 0 ? radius : 'auto' };
 }
 
 export function renderThumbnailWithFraming(viewer, cameraFraming, renderImage) {

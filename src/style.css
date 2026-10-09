@@ -18,6 +18,8 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 [hidden] { display: none !important; }
 
 .workspace { display: grid; grid-template-columns: minmax(0, 1fr) 370px; height: 100vh; min-height: 0; background: #0b0d10; }
+.workspace.library-open { grid-template-columns: minmax(0, 1fr); }
+.workspace.library-open > .panel { display: none; }
 @supports (height: 100dvh) {
   .workspace { height: 100dvh; }
 }
