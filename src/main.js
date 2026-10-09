@@ -178,7 +178,6 @@ document.querySelector('#app').innerHTML = `
         <div class="gesture-tip" id="gestureTip">左键旋转 · 滚轮/双指缩放 · 右键平移</div>
         <section class="model-library" id="modelLibrary" aria-label="模型库">
           <div class="library-header">
-            <div><span class="eyebrow">MODEL LIBRARY</span><h2>选择要预览的模型</h2></div>
             <div class="library-header-actions">
               <button class="library-batch-button" id="sequenceBatchMode" type="button" hidden>批量选择</button>
               <button class="library-batch-button primary" id="sequenceBatchBuild" type="button" hidden>构建已选 (0)</button>
@@ -475,8 +474,6 @@ function renderModelLibrary() {
     renderSequenceLibrary();
     return;
   }
-  document.querySelector('.library-header .eyebrow').textContent = 'MODEL LIBRARY';
-  document.querySelector('.library-header h2').textContent = '选择要预览的模型';
   library.setAttribute('aria-label', '模型库');
   const batchMode = document.querySelector('#sequenceBatchMode');
   const batchBuild = document.querySelector('#sequenceBatchBuild');
@@ -540,8 +537,6 @@ function renderModelLibrary() {
 }
 
 function renderSequenceLibrary() {
-  document.querySelector('.library-header .eyebrow').textContent = '360° PRODUCT LIBRARY';
-  document.querySelector('.library-header h2').textContent = '选择要预览的360°产品';
   library.setAttribute('aria-label', '360度产品库');
   const batchMode = document.querySelector('#sequenceBatchMode');
   const batchBuild = document.querySelector('#sequenceBatchBuild');
