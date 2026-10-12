@@ -33,6 +33,7 @@
     "test:model-appearance": "node tests/model-appearance.mjs",
     "test:export": "node tests/png-export.mjs",
     "test:export-quality": "node tests/export-quality.mjs",
+    "test:export-options": "node tests/export-options.mjs",
     "test:webgl-capabilities": "node tests/webgl-capabilities.mjs",
     "test:library-search": "node tests/library-search.mjs",
     "test:thumbnail-appearance": "node tests/thumbnail-appearance.mjs",

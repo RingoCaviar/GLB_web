@@ -39,9 +39,8 @@ import { SequenceViewer } from './sequence-viewer.js';
 import { finalizePngExport } from './png-export.js';
 import {
   ExportQualityMode,
-  loadExportQuality,
-  saveExportQuality,
 } from './export-quality.js';
+import { ExportOptions } from './export-options.js';
 import { hasRenderRestorationFailure, renderFixedSizeImage } from './fixed-size-render.js';
 import { ModelLoadingModule } from './model-loading.js';
 import { ModelViewerLoadingAdapter } from './model-viewer-loading-adapter.js';
@@ -55,6 +54,7 @@ import { applyVerticalLensShift, verticalLensShiftCapability } from './vertical-
 customElements.get('model-viewer').minimumRenderScale = 1;
 
 const sharedCameraFraming = loadSharedCameraFraming();
+const exportOptions = new ExportOptions();
 
 const state = {
   theta: sharedCameraFraming.theta,
@@ -63,13 +63,8 @@ const state = {
   fov: sharedCameraFraming.fov,
   verticalShift: sharedCameraFraming.verticalShift,
   buildingCorrection: sharedCameraFraming.buildingCorrection,
-  width: 4096,
-  height: 4096,
-  maximumExportDimension: 8192,
-  transparent: false,
-  preserveShadow: false,
-  exportQuality: loadExportQuality(),
-  textureDetailMode: loadExportQuality() === ExportQualityMode.HIGH ? 'base-level' : 'adaptive',
+  ...exportOptions.getSnapshot(),
+  maximumExportDimension: exportOptions.maximumDimension,
   background: '#e8eaed',
   loaded: false,
   exporting: false,
@@ -1504,23 +1499,32 @@ document.querySelector('#resetBackground').addEventListener('click', () => {
 document.querySelector('#resetBackground').disabled = true;
 
 const preserveShadowToggle = document.querySelector('#preserveShadowToggle');
+function applyExportOptions(snapshot = exportOptions.getSnapshot()) {
+  Object.assign(state, snapshot, { maximumExportDimension: snapshot.maximumDimension });
+  widthInput.value = snapshot.width;
+  heightInput.value = snapshot.height;
+  document.querySelector('#exportQuality').value = snapshot.exportQuality;
+  document.querySelector('#textureDetailMode').value = snapshot.textureDetailMode;
+  document.querySelector('#transparentToggle').checked = snapshot.transparent;
+  preserveShadowToggle.checked = snapshot.preserveShadow;
+  preserveShadowToggle.disabled = !snapshot.transparent;
+  updateDimensions();
+}
+
 document.querySelector('#transparentToggle').addEventListener('change', (event) => {
-  state.transparent = event.target.checked;
-  preserveShadowToggle.disabled = !state.transparent;
+  applyExportOptions(exportOptions.setOption('transparent', event.target.checked));
 });
 
 preserveShadowToggle.addEventListener('change', (event) => {
-  state.preserveShadow = event.target.checked;
+  applyExportOptions(exportOptions.setOption('preserveShadow', event.target.checked));
 });
 
 document.querySelector('#exportQuality').addEventListener('change', (event) => {
-  state.exportQuality = saveExportQuality(event.target.value);
-  state.textureDetailMode = state.exportQuality === ExportQualityMode.HIGH ? 'base-level' : 'adaptive';
-  document.querySelector('#textureDetailMode').value = state.textureDetailMode;
+  applyExportOptions(exportOptions.setOption('exportQuality', event.target.value));
 });
 
 document.querySelector('#textureDetailMode').addEventListener('change', (event) => {
-  state.textureDetailMode = event.target.value;
+  applyExportOptions(exportOptions.setOption('textureDetailMode', event.target.value));
 });
 
 const widthInput = document.querySelector('#exportWidth');
@@ -1528,7 +1532,8 @@ const heightInput = document.querySelector('#exportHeight');
 const exportCapability = readExportDimensionCapability();
 const exportCapabilityMessage = document.querySelector('#exportCapability');
 if (exportCapability.available) {
-  state.maximumExportDimension = exportCapability.maximumDimension;
+  exportOptions.setMaximumDimension(exportCapability.maximumDimension);
+  state.maximumExportDimension = exportOptions.maximumDimension;
   widthInput.max = state.maximumExportDimension;
   heightInput.max = state.maximumExportDimension;
   exportCapabilityMessage.textContent = `设备 WebGL 单边上限：${state.maximumExportDimension}px（纹理 ${exportCapability.textureSize}px · 渲染缓冲 ${exportCapability.renderbufferSize}px）`;
@@ -1567,8 +1572,10 @@ function updateDimensions({ commit = true } = {}) {
     !Number.isFinite(requestedWidth) || requestedWidth < 64 || requestedWidth > state.maximumExportDimension ||
     !Number.isFinite(requestedHeight) || requestedHeight < 64 || requestedHeight > state.maximumExportDimension
   )) return;
-  state.width = clamp(requestedWidth, 64, state.maximumExportDimension);
-  state.height = clamp(requestedHeight, 64, state.maximumExportDimension);
+  const snapshot = exportOptions.setOption('width', requestedWidth);
+  const nextSnapshot = exportOptions.setOption('height', requestedHeight);
+  state.width = snapshot.width;
+  state.height = nextSnapshot.height;
   if (commit) {
     widthInput.value = state.width;
     heightInput.value = state.height;
@@ -1600,6 +1607,7 @@ document.querySelectorAll('[data-size]').forEach((button) => button.addEventList
 }));
 document.querySelector('#resetExportWidth').addEventListener('click', () => { widthInput.value = 4096; updateDimensions(); });
 document.querySelector('#resetExportHeight').addEventListener('click', () => { heightInput.value = 4096; updateDimensions(); });
+applyExportOptions(exportOptions.getSnapshot());
 updateDimensions();
 new ResizeObserver(updateFramingGuide).observe(shell);
 
@@ -1625,24 +1633,25 @@ function exportImage() {
 async function performExportImage(signal) {
   if (!state.loaded || state.exporting) return;
   updateDimensions();
+  const exportPlan = exportOptions.getExportPlan();
   state.exporting = true;
   shell.classList.add('exporting');
   exportButton.disabled = true;
   exportButton.classList.add('busy');
   exportButton.querySelector('.button-label').textContent = '正在渲染…';
-  const useFxaa = state.exportQuality === ExportQualityMode.HIGH;
+  const useFxaa = exportPlan.antiAlias === 'fxaa';
   const scaleLabel = useFxaa ? 'FXAA 抗锯齿' : '标准采样';
   showMessage(`${state.width} × ${state.height} 图片生成中（${scaleLabel}），请稍候…`);
 
   try {
     const rendered = await renderFixedSizeImage(viewer, {
-      width: state.width,
-      height: state.height,
-      background: state.transparent ? 'transparent' : state.background,
+      width: exportPlan.width,
+      height: exportPlan.height,
+      background: exportPlan.transparent ? 'transparent' : state.background,
       hideEnvironment: true,
-      transparent: state.transparent,
-      preserveShadow: state.preserveShadow,
-      textureDetailMode: state.textureDetailMode,
+      transparent: exportPlan.transparent,
+      preserveShadow: exportPlan.preserveShadow,
+      textureDetailMode: exportPlan.textureDetailMode,
       cameraFraming: state,
       signal,
     });
@@ -1651,8 +1660,7 @@ async function performExportImage(signal) {
       : `自适应 mipmap（${state.renderQuality.maximumAnisotropy}× 各向异性）`;
     const blob = await finalizePngExport(rendered.blob, {
       ...state,
-      width: state.width,
-      height: state.height,
+      ...exportPlan,
       antiAlias: useFxaa ? 'fxaa' : 'none',
     });
     const dimensions = await readImageDimensions(blob);
