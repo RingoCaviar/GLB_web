@@ -1,0 +1,83 @@
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import sharp from 'sharp';
+import { buildSequenceProducts, publicSequenceProducts, resolveSequenceAsset, scanSequenceLibrary } from '../scripts/sequence-cache.mjs';
+
+const blender = process.env.BLENDER_BIN || 'blender';
+const driver = fileURLToPath(new URL('./blender-sequence-render.py', import.meta.url));
+const productName = '测试 产品';
+const root = await mkdtemp(join(tmpdir(), 'glb-blender-sequence-'));
+
+try {
+  const projectRoot = join(root, '中文 项目');
+  const sourceRoot = join(projectRoot, 'image_sequence');
+  const scripts = join(projectRoot, 'scripts');
+  await mkdir(scripts, { recursive: true });
+  await writeFile(join(scripts, 'sequence-cache.mjs'), '');
+  const render = spawnSync(blender, [
+    '--background', '--factory-startup', '--threads', '2', '--python-exit-code', '1',
+    '--python', driver, '--', projectRoot,
+  ], {
+    encoding: 'utf8', maxBuffer: 8 * 1024 * 1024, timeout: 180_000,
+    env: { ...process.env, BLENDER_USER_RESOURCES: join(root, 'blender-profile') },
+  });
+  if (render.error?.code === 'ENOENT') {
+    throw new Error('请安装 Blender 5.1.2 并将 BLENDER_BIN 设为其可执行文件路径。', { cause: render.error });
+  }
+  if (render.error) throw render.error;
+  assert.equal(render.status, 0, [render.stdout, render.stderr].filter(Boolean).join('\n'));
+  assert.deepEqual((await readdir(sourceRoot)).filter((name) => name !== '.generated'), [productName]);
+
+  const scan = await scanSequenceLibrary(projectRoot);
+  assert.deepEqual(scan.warnings, []);
+  const products = publicSequenceProducts(scan);
+  assert.equal(products.length, 1);
+  const [product] = products;
+  assert.equal(product.name, productName);
+  assert.equal(product.id, productName);
+  assert.equal(product.cacheStatus, 'missing');
+  assert.equal(product.totalFrames, 8);
+  assert.deepEqual(product.resolutions, [{ width: 80, height: 64 }]);
+  assert.deepEqual(product.angles.map(({ angle }) => angle), [-12.5, 5.125]);
+
+  for (const { angle, frames } of product.angles) {
+    assert.deepEqual(frames.map(({ index }) => index), [1, 2, 3, 4]);
+    const imageHashes = new Set();
+    for (const { index, originalFilename } of frames) {
+      const expectedFilename = `${productName}_俯角${angle}_${String(index).padStart(4, '0')}.png`;
+      assert.equal(originalFilename, expectedFilename);
+      const image = sharp(join(sourceRoot, productName, originalFilename));
+      const metadata = await image.metadata();
+      assert.equal(metadata.format, 'png');
+      assert.equal(metadata.hasAlpha, true);
+      const { data, info } = await image.raw().toBuffer({ resolveWithObject: true });
+      const center = (Math.floor(info.height / 2) * info.width + Math.floor(info.width / 2)) * info.channels;
+      assert.ok(Math.abs(data[center + 3] - 128) <= 1, `${originalFilename} should apply compositor opacity near its center`);
+      assert.equal(data[3], 0, `${originalFilename} should have a transparent background`);
+      imageHashes.add(createHash('sha256').update(data).digest('hex'));
+    }
+    assert.equal(imageHashes.size, 4, `Elevation ${angle} should contain four distinct views`);
+  }
+
+  const cache = await buildSequenceProducts(projectRoot, [productName], 64);
+  assert.equal(cache.succeeded, 8);
+  assert.equal(cache.failed, 0);
+  const [cached] = publicSequenceProducts(await scanSequenceLibrary(projectRoot));
+  assert.equal(cached.cacheStatus, 'ready');
+  const defaultFrame = `${productName}/${productName}_俯角5.125_0001.png`;
+  assert.equal(cached.thumbnailUrl, `/__sequence/file?kind=preview&id=${encodeURIComponent(defaultFrame)}`);
+  const preview = await resolveSequenceAsset(projectRoot, 'preview', defaultFrame);
+  const metadata = await sharp(preview).metadata();
+  assert.equal(metadata.format, 'webp');
+  assert.equal(metadata.width, 64);
+  assert.equal(metadata.hasAlpha, true);
+  console.log('Blender 360° sequence integration passed');
+} finally {
+  sharp.cache(false);
+  await rm(root, { recursive: true, force: true });
+}

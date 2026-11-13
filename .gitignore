@@ -3,6 +3,7 @@ dist/
 *.zip
 .runtime/
 .vite/
+__pycache__/
 
 # 本地渲染设置（每台机器独立，不纳入版本控制）
 config/default-lighting.json

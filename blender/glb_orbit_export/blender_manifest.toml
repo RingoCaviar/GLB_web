@@ -1,0 +1,15 @@
+schema_version = "1.0.0"
+id = "glb_orbit_export"
+version = "1.2.0"
+name = "GLB Web 360 Sequence"
+tagline = "Render product turntables for the GLB Web viewer"
+maintainer = "GLB Web"
+type = "add-on"
+blender_version_min = "5.1.2"
+license = ["SPDX:GPL-3.0-or-later"]
+
+[permissions]
+files = "Stage local render jobs and export PNG sequences"
+
+[build]
+paths_exclude_pattern = ["__pycache__/", "*.pyc", "*.zip"]
