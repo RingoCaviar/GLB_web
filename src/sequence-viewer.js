@@ -2,8 +2,20 @@ const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 const frameSource = (frame) => frame?.dragUrl ?? frame?.previewUrl ?? frame?.originalUrl;
 const detailSource = (frame) => frame?.dragUrl && frame.previewUrl !== frame.dragUrl ? frame.previewUrl : undefined;
 const MAX_DRAG_LAG = 8;
+const DRAG_PREVIEW_EDGE = 640;
+const MAX_RING_BYTES = 96 * 1024 ** 2;
 
-export function buildPreloadOrder(product, angleIndex = 0, frameIndex = 0, { radius = 3, direction = 1 } = {}) {
+function dragFrameBytes(frame) {
+  const { width, height } = frame;
+  const hasDimensions = width > 0 && height > 0;
+  if (!frame.dragUrl && (!frame.previewUrl || !hasDimensions || Math.max(width, height) > DRAG_PREVIEW_EDGE)) return Infinity;
+  if (!hasDimensions) return 4 * DRAG_PREVIEW_EDGE ** 2;
+  const scale = Math.min(1, DRAG_PREVIEW_EDGE / Math.max(width, height));
+  return 4 * Math.ceil(width * scale) * Math.ceil(height * scale);
+}
+
+export function buildPreloadOrder(product, angleIndex = 0, frameIndex = 0,
+  { radius = 3, direction = 1, includeAdjacent = true } = {}) {
   const frames = product?.angles[angleIndex]?.frames;
   if (!frames?.length) return [];
   const current = frames[frameIndex];
@@ -12,10 +24,12 @@ export function buildPreloadOrder(product, angleIndex = 0, frameIndex = 0, { rad
     order.push(frames[manualFrameIndex(frameIndex + distance * direction, frames.length)]);
     order.push(frames[manualFrameIndex(frameIndex - distance * direction, frames.length)]);
   }
-  for (const index of [angleIndex - 1, angleIndex + 1]) {
-    const adjacent = product.angles[index]?.frames;
-    if (adjacent?.length) order.push(adjacent.find((frame) => frame.index === current?.index)
-      ?? adjacent[Math.min(frameIndex, adjacent.length - 1)]);
+  if (includeAdjacent) {
+    for (const index of [angleIndex - 1, angleIndex + 1]) {
+      const adjacent = product.angles[index]?.frames;
+      if (adjacent?.length) order.push(adjacent.find((frame) => frame.index === current?.index)
+        ?? adjacent[Math.min(frameIndex, adjacent.length - 1)]);
+    }
   }
   return [...new Map(order.filter(frameSource).map((frame) => [frameSource(frame), frame])).values()];
 }
@@ -44,13 +58,15 @@ export function smoothstep(value) {
 }
 
 export class SequenceViewer extends EventTarget {
-  constructor(root, { concurrency = 4, maxImages = 12 } = {}) {
+  constructor(root, { concurrency = 4, maxImages } = {}) {
     super();
     this.root = root;
     this.canvas = root.querySelector('canvas');
     this.context = this.canvas.getContext('2d', { alpha: true });
-    this.maxImages = Math.max(3, maxImages);
+    this.maxImages = Math.max(3, maxImages ?? 12);
+    this.maxRingImages = maxImages ?? Infinity;
     this.concurrency = clamp(concurrency, 1, this.maxImages);
+    this.preloadWholeRing = false;
     this.product = null;
     this.angleIndex = 0;
     this.requestedAngleIndex = 0;
@@ -97,6 +113,10 @@ export class SequenceViewer extends EventTarget {
     const key = this.imageSource(this.requestedFrame);
     return this.ready && Boolean(key) && !this.images.has(key) && !this.frameFailed;
   }
+  get settledDetail() {
+    const frame = this.requestedFrame;
+    return !this.dragging && !this.playing && this.images.has(frameSource(frame)) ? detailSource(frame) : undefined;
+  }
 
   emit(type, detail = {}) {
     this.dispatchEvent(new CustomEvent(type, { detail: { ...this.snapshot(), ...detail } }));
@@ -131,8 +151,8 @@ export class SequenceViewer extends EventTarget {
   async load(product) {
     this.unload();
     this.product = product;
-    this.requestedAngleIndex = product.angles.reduce((best, item, index, list) =>
-      Math.abs(item.angle - 5) < Math.abs(list[best].angle - 5) ? index : best, 0);
+    this.setRequestedAngle(product.angles.reduce((best, item, index, list) =>
+      Math.abs(item.angle - 5) < Math.abs(list[best].angle - 5) ? index : best, 0));
     this.angleIndex = this.requestedAngleIndex;
     if (!this.requestedAngle?.frames.length) {
       this.emit('viewererror', { error: new Error('EMPTY_SEQUENCE') });
@@ -174,6 +194,7 @@ export class SequenceViewer extends EventTarget {
     this.ready = false;
     this.playbackComplete = false;
     this.angleIndex = this.requestedAngleIndex = this.frameIndex = 0;
+    this.preloadWholeRing = false;
     this.renderPosition = 0;
     this.requestDirection = 1;
     this.pendingRenderPosition = null;
@@ -199,23 +220,32 @@ export class SequenceViewer extends EventTarget {
     this.inFlight.delete(key);
   }
 
-  preloadKeys() {
+  setRequestedAngle(index) {
+    this.requestedAngleIndex = index;
+    const frames = this.requestedAngle?.frames;
+    this.preloadWholeRing = Boolean(frames?.length) && frames.length + 3 <= this.maxRingImages
+      && frames.reduce((bytes, frame) => bytes + dragFrameBytes(frame), 0) <= MAX_RING_BYTES;
+  }
+
+  preloadKeys(detail) {
     const blend = this.blendState();
     const frames = this.requestedAngle?.frames;
-    const nearby = buildPreloadOrder(this.product, this.requestedAngleIndex, blend.display,
-      { direction: this.requestDirection }).map(frameSource);
+    const nearby = buildPreloadOrder(this.product, this.requestedAngleIndex, blend.display, {
+      direction: this.requestDirection,
+      radius: this.preloadWholeRing ? Math.floor(frames.length / 2) : 3,
+      includeAdjacent: !this.preloadWholeRing,
+    }).map(frameSource);
     if (blend.progress > .001 && !this.reducedMotion.matches) {
       const other = blend.display === blend.current ? blend.next : blend.current;
       nearby.splice(1, 0, frameSource(frames[other]));
     }
     if (this.playing) nearby.splice(1, 0, frameSource(frames[this.nextPlayableFrame()]));
-    const detail = detailSource(frames?.[blend.display]);
-    if (detail && !this.dragging && !this.playing && this.images.has(nearby[0])) nearby.splice(1, 0, detail);
+    if (detail) nearby.splice(1, 0, detail);
     // Leave space for the last painted view until its replacement can be drawn.
     const retained = new Set([this.painted?.current, this.painted?.next].filter(Boolean));
     const queue = [];
     for (const key of new Set(nearby.filter(Boolean))) {
-      if (!retained.has(key) && retained.size >= this.maxImages) continue;
+      if (!this.preloadWholeRing && !retained.has(key) && retained.size >= this.maxImages) continue;
       retained.add(key);
       queue.push(key);
     }
@@ -233,7 +263,8 @@ export class SequenceViewer extends EventTarget {
 
   preload() {
     if (!this.product) return;
-    const queue = this.preloadKeys();
+    const detail = this.settledDetail;
+    const queue = this.preloadKeys(detail);
     const wanted = new Set(queue);
     this.trimImages(wanted);
     // A sliding drag target can outrun a conversion. Give the current ring's
@@ -248,7 +279,12 @@ export class SequenceViewer extends EventTarget {
       const lowestPriority = queue.findLast((key) => this.inFlight.has(key));
       if (lowestPriority) this.cancelFrame(lowestPriority);
     }
-    for (const key of needed.slice(0, this.concurrency - this.inFlight.size)) this.loadFrame(key);
+    for (const key of needed.slice(0, this.concurrency - this.inFlight.size)) {
+      // The server prioritizes drag previews. Let existing requests drain so
+      // the exact settled image can start before more background work arrives.
+      if (this.preloadWholeRing && this.inFlight.has(detail)) break;
+      this.loadFrame(key);
+    }
     if (this.loading && !this.inFlight.size) this.finishLoading('loaderror');
   }
 
@@ -299,7 +335,7 @@ export class SequenceViewer extends EventTarget {
     this.angleIndex = this.product.angles.findIndex((angle) => angle.frames.some((frame) => frameSource(frame) === key));
     this.frameIndex = this.angle.frames.findIndex((frame) => frameSource(frame) === key);
     if (this.frameFailed) {
-      this.requestedAngleIndex = this.angleIndex;
+      this.setRequestedAngle(this.angleIndex);
       this.renderPosition = this.frameIndex;
     }
     this.ready = true;
@@ -309,9 +345,9 @@ export class SequenceViewer extends EventTarget {
     this.finishLoading('ready');
   }
 
-  trimImages(wanted) {
+  trimImages(wanted, discardUnwanted = this.preloadWholeRing) {
     for (const [key, image] of this.images) {
-      if (this.images.size <= this.maxImages) return;
+      if (!discardUnwanted && this.images.size <= this.maxImages) return;
       if (wanted.has(key) || key === this.painted?.current || key === this.painted?.next) continue;
       this.releaseImage(image);
       this.images.delete(key);
@@ -354,7 +390,7 @@ export class SequenceViewer extends EventTarget {
 
   imageSource(frame) {
     const detail = detailSource(frame);
-    return this.images.has(detail) ? detail : frameSource(frame);
+    return !this.dragging && this.images.has(detail) ? detail : frameSource(frame);
   }
 
   nearbyDragFrame(target, frames) {
@@ -443,7 +479,9 @@ export class SequenceViewer extends EventTarget {
     if (next === this.requestedAngleIndex) return;
     this.stop();
     const previousFrame = this.requestedFrame?.index;
-    this.requestedAngleIndex = next;
+    const previousWholeRing = this.preloadWholeRing;
+    this.setRequestedAngle(next);
+    if (previousWholeRing && !this.preloadWholeRing) this.trimImages(new Set(), true);
     const exact = this.requestedAngle.frames.findIndex((frame) => frame.index === previousFrame);
     const position = exact >= 0 ? exact : clamp(this.renderPosition, 0, this.requestedAngle.frames.length - 1);
     this.playbackComplete = false;

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { SequenceViewer } from '../src/sequence-viewer.js';
 
-function fixture(id, frameCount, angleCount = 1) {
+function fixture(id, frameCount, angleCount = 1, { drag = false } = {}) {
   return {
     id,
     totalFrames: frameCount * angleCount,
@@ -10,6 +10,7 @@ function fixture(id, frameCount, angleCount = 1) {
       frames: Array.from({ length: frameCount }, (_, index) => ({
         index: index + 1,
         previewUrl: `${id}/${ring}/${index + 1}.webp`,
+        ...(drag ? { dragUrl: `${id}/${ring}/${index + 1}-small.webp`, width: 3000, height: 3000 } : {}),
         originalUrl: `${id}/${ring}/${index + 1}.png`,
         originalFilename: `${id}_俯角${5 + ring * 5}_${index + 1}.png`,
       })),
@@ -25,8 +26,8 @@ function makeHarness() {
   let nextAnimation = 0;
   let pointerX = 0;
   class FakeImage {
-    naturalWidth = 1600;
-    naturalHeight = 800;
+    get naturalWidth() { return this.url?.endsWith('-small.webp') ? 640 : 1600; }
+    get naturalHeight() { return this.naturalWidth; }
 
     set src(url) {
       if (pending.get(this.url) === this) pending.delete(this.url);
@@ -97,14 +98,107 @@ function makeHarness() {
       image[success ? 'onload' : 'onerror']?.();
       await new Promise((resolve) => setImmediate(resolve));
     },
-    async finishNearby() {
+    async finishNearby(limit = 32) {
       let count = 0;
       while (pending.size) {
-        assert.ok(++count <= 32, 'Loading a local window should not fetch the complete product');
+        assert.ok(++count <= limit, 'Preloading should finish within its request budget');
         await this.respond(pending.keys().next().value);
       }
     },
   };
+}
+
+async function checkWholeRing() {
+  const harness = makeHarness();
+  const { root, requested, pending, painted } = harness;
+  const viewer = new SequenceViewer(root);
+  const product = fixture('ring', 36, 2, { drag: true });
+  try {
+    const loaded = viewer.load(product);
+    await harness.respond('ring/0/1-small.webp');
+    await loaded;
+    assert.equal(viewer.snapshot().ready, true);
+    assert.deepEqual(painted, ['ring/0/1-small.webp'], 'The first frame should be visible during preloading');
+    await harness.finishNearby(42);
+    const currentRingRequests = requested.filter((url) => url.startsWith('ring/0/') && url.endsWith('-small.webp'));
+    assert.deepEqual(new Set(currentRingRequests), new Set(product.angles[0].frames.map((frame) => frame.dragUrl)),
+      'Opening a product should preload every lightweight frame of its active angle');
+    assert.ok(requested.filter((url) => url.startsWith('ring/1/')).length <= 2,
+      'Opening an angle should leave the rest of the neighboring angle unloaded');
+    assert.deepEqual(requested.filter((url) => !url.endsWith('-small.webp')), ['ring/0/1.webp'],
+      'Only the stationary frame should request a sharp preview');
+    assert.deepEqual(painted, ['ring/0/1.webp']);
+
+    const requestCount = requested.length;
+    harness.pointer('pointerdown');
+    harness.pointer('pointermove', -18);
+    harness.tick();
+    assert.deepEqual(painted, ['ring/0/36-small.webp'], 'A warm drag should immediately wrap to the last frame');
+    harness.pointer('pointermove', 18);
+    harness.tick();
+    assert.deepEqual(painted, ['ring/0/1-small.webp'], 'Reversing into a sharp still should use the lightweight frame');
+    for (let frame = 2; frame <= 36; frame++) {
+      harness.pointer('pointermove', 18);
+      harness.tick();
+      assert.deepEqual(painted, [`ring/0/${frame}-small.webp`], 'Every frame of the warm ring should be immediately visible');
+    }
+    harness.pointer('pointermove', 288);
+    harness.tick();
+    assert.deepEqual(painted, ['ring/0/16-small.webp'], 'A distant frame should be immediately available in memory');
+    assert.equal(requested.length, requestCount, 'A warm drag should make no image requests');
+
+    harness.pointer('pointerup');
+    await harness.respond('ring/0/16.webp');
+    assert.deepEqual(painted, ['ring/0/16.webp'], 'Releasing the drag should sharpen the exact angle');
+    assert.equal(viewer.snapshot().frame.originalUrl, 'ring/0/16.png');
+
+    viewer.showAngle(1);
+    assert.deepEqual(painted, ['ring/0/16.webp'], 'Switching angles should preserve the last view until its replacement is ready');
+    await harness.respond('ring/1/16-small.webp');
+    await harness.respond('ring/1/17-small.webp');
+    harness.pointer('pointerdown');
+    harness.pointer('pointermove', 18);
+    harness.tick();
+    assert.deepEqual(painted, ['ring/1/17-small.webp']);
+    const requestsBeforeRelease = requested.length;
+    harness.pointer('pointerup');
+    const sharpFrame = 'ring/1/17.webp';
+    if (!pending.has(sharpFrame)) {
+      const peer = [...pending.keys()].find((url) => url.endsWith('-small.webp'));
+      assert.ok(peer, 'The only work ahead of the sharp frame should be preloads already in flight');
+      await harness.respond(peer);
+    }
+    assert.equal(requested[requestsBeforeRelease], sharpFrame,
+      'The released frame should sharpen before starting more background preloads');
+    await harness.respond(sharpFrame);
+    await harness.finishNearby(42);
+    const nextRingRequests = requested.filter((url) => url.startsWith('ring/1/') && url.endsWith('-small.webp'));
+    assert.deepEqual(new Set(nextRingRequests), new Set(product.angles[1].frames.map((frame) => frame.dragUrl)));
+    assert.equal(viewer.snapshot().angle, 10);
+    assert.deepEqual(painted, [sharpFrame]);
+    assert.ok(viewer.snapshot().resident <= 39, 'After switching angles, the previous ring should be released');
+
+    const oversized = viewer.load(fixture('oversized', 72, 1, { drag: true }));
+    await harness.respond('oversized/0/1-small.webp');
+    await oversized;
+    await harness.finishNearby();
+    assert.ok(viewer.snapshot().resident <= 12, 'A ring that exceeds the memory budget should keep a local window');
+
+    const damaged = fixture('damaged', 72, 2, { drag: true });
+    damaged.angles[0].frames.splice(1);
+    damaged.totalFrames = 73;
+    const fallback = viewer.load(damaged);
+    await harness.respond('damaged/0/1-small.webp', false);
+    await harness.respond('damaged/0/1-small.webp', false);
+    await harness.respond('damaged/1/1-small.webp');
+    await fallback;
+    assert.equal(viewer.snapshot().angle, 10);
+    assert.deepEqual(painted, ['damaged/1/1-small.webp'], 'The first usable frame should keep displaying after a fallback to a larger ring');
+  } finally {
+    viewer.unload();
+    assert.equal(pending.size, 0);
+    harness.restore();
+  }
 }
 
 export async function checkSequenceViewer() {
@@ -189,8 +283,7 @@ export async function checkSequenceViewer() {
     assert.equal(viewer.snapshot().resident, 0);
     assert.equal(pending.size, 0);
 
-    const dragProduct = fixture('drag', 36);
-    for (const frame of dragProduct.angles[0].frames) frame.dragUrl = `drag/0/${frame.index}-small.webp`;
+    const dragProduct = fixture('drag', 36, 1, { drag: true });
     const start = viewer.load(dragProduct);
     await harness.respond('drag/0/1-small.webp');
     await start;
@@ -217,4 +310,5 @@ export async function checkSequenceViewer() {
     viewer.unload();
     harness.restore();
   }
+  await checkWholeRing();
 }
