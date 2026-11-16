@@ -2,7 +2,6 @@ const collator = new Intl.Collator('zh-CN', { numeric: true, sensitivity: 'base'
 
 export let sequenceProducts = [];
 export let sequenceWarnings = [];
-export let sequenceWritable = false;
 
 export async function refreshSequenceLibrary() {
   const response = await fetch('/__sequence/library', { cache: 'no-store' });
@@ -10,7 +9,6 @@ export async function refreshSequenceLibrary() {
   const data = await response.json();
   sequenceProducts = Array.isArray(data.products) ? data.products : [];
   sequenceWarnings = Array.isArray(data.warnings) ? data.warnings : [];
-  sequenceWritable = Boolean(data.writable);
   return data;
 }
 

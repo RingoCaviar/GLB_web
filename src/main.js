@@ -32,7 +32,6 @@ import {
   sequenceParentFolder,
   sequenceProducts,
   sequenceWarnings,
-  sequenceWritable,
   refreshSequenceLibrary,
 } from './sequence-library.js';
 import { SequenceViewer } from './sequence-viewer.js';
@@ -75,7 +74,6 @@ const state = {
   thumbnailWritable: false,
   thumbnailCapabilityReady: false,
   thumbnailGeneratingId: null,
-  modelSelectionMode: false,
   selectedModelIds: new Set(),
   thumbnailBatchRunning: false,
   thumbnailBatchStopRequested: false,
@@ -83,9 +81,6 @@ const state = {
   sequenceFolder: '',
   selectedSequence: null,
   sequenceLibraryLoading: false,
-  sequenceSelectionMode: false,
-  selectedSequenceIds: new Set(),
-  sequenceJobRunning: false,
   libraryQuery: '',
   renderQuality: {
     applied: false,
@@ -148,12 +143,14 @@ document.querySelector('#app').innerHTML = `
           <div class="sequence-viewer" id="sequenceViewer" hidden>
             <canvas aria-label="360度产品图片预览"></canvas>
             <div class="sequence-placeholder" aria-live="polite">
-              <span class="sequence-spinner"></span>
-              <strong id="sequenceLoadingTitle">正在准备 360° 图片</strong>
-              <small id="sequenceLoadingProduct">载入产品帧序列…</small>
-              <div class="sequence-loading-track"><i id="sequenceLoadingBar"></i></div>
-              <small id="sequenceLoadingText">0 / 0 · 0%</small>
-              <button class="sequence-retry" id="sequenceRetry" type="button" hidden>重新加载失败帧</button>
+              <span class="sequence-spinner" id="sequenceSpinner" aria-hidden="true" hidden></span>
+              <strong id="sequenceLoadingTitle">请选择 360° 产品</strong>
+              <small id="sequenceLoadingProduct" hidden></small>
+              <button class="sequence-retry" id="sequenceRetry" type="button" hidden>重新加载</button>
+            </div>
+            <div class="sequence-frame-status" id="sequenceFrameStatus" hidden>
+              <span id="sequenceFrameStatusText" role="status"></span>
+              <button id="sequenceRetryFrame" type="button" hidden>重试</button>
             </div>
           </div>
           <div class="frame-outline" aria-hidden="true"></div>
@@ -161,8 +158,8 @@ document.querySelector('#app').innerHTML = `
           <div class="sequence-toolbar" id="sequenceToolbar" hidden>
             <button type="button" id="sequencePlay" aria-pressed="false"><span>▶</span> 自动旋转</button>
             <i></i>
-            <span id="sequenceAngle">俯角 5°</span>
-            <span id="sequenceFrame">1 / 21</span>
+            <span id="sequenceAngle">俯角 —</span>
+            <span id="sequenceFrame">— / —</span>
             <button type="button" id="sequenceReset">重置</button>
           </div>
         </div>
@@ -172,10 +169,6 @@ document.querySelector('#app').innerHTML = `
         </div>
         <div class="gesture-tip" id="gestureTip">左键旋转 · 滚轮/双指缩放 · 右键平移</div>
         <section class="model-library" id="modelLibrary" aria-label="模型库">
-          <div class="library-header-actions" hidden>
-            <button class="library-batch-button" id="sequenceBatchMode" type="button">批量选择</button>
-            <button class="library-batch-button primary" id="sequenceBatchBuild" type="button">构建已选 (0)</button>
-          </div>
           <div class="library-tools">
             <label class="library-search" for="librarySearch">
               <span aria-hidden="true">⌕</span>
@@ -189,7 +182,6 @@ document.querySelector('#app').innerHTML = `
           <div class="library-grid" id="libraryGrid"></div>
           <div class="model-context-menu" id="modelContextMenu" hidden>
             <button type="button" id="generateThumbnail">自动生成缩略图</button>
-            <button type="button" id="generateSequenceCache" hidden>构建缩略图缓存</button>
             <small id="contextMenuHint">固定 640 × 480 · 默认视角</small>
           </div>
         </section>
@@ -265,7 +257,7 @@ document.querySelector('#app').innerHTML = `
       <div class="sequence-panel" id="sequencePanel" hidden>
         <section class="panel-section">
           <div class="section-heading"><span>01</span><h2>保存图片</h2></div>
-          <div class="sequence-current"><small>当前原始帧</small><strong id="sequenceFilename">尚未选择产品</strong><span id="sequenceResolution">3000 × 3000 PNG</span></div>
+          <div class="sequence-current"><small>当前原始帧</small><strong id="sequenceFilename">尚未选择产品</strong><span id="sequenceResolution"></span></div>
           <button class="primary-button" id="sequenceDownload" type="button" disabled><span class="button-label">保存原始 PNG</span><span class="button-meta" id="sequenceDownloadMeta">原图</span></button>
           <p class="message" id="sequenceMessage" aria-live="polite"></p>
         </section>
@@ -274,10 +266,6 @@ document.querySelector('#app').innerHTML = `
           <label class="switch-row">
             <span><strong>自动旋转</strong><small id="sequencePlaybackStatus">以每秒 8 帧播放一次</small></span>
             <input id="sequenceAutoToggle" type="checkbox" role="switch"><i></i>
-          </label>
-          <label class="switch-row">
-            <span><strong>循环拖动</strong><small>开启后手动旋转首尾相接</small></span>
-            <input id="sequenceLoopToggle" type="checkbox" role="switch"><i></i>
           </label>
           <label class="switch-row">
             <span><strong>左右反向</strong><small>反转水平拖动的旋转方向</small></span>
@@ -290,8 +278,7 @@ document.querySelector('#app').innerHTML = `
         <section class="panel-section">
           <div class="section-heading"><span>03</span><h2>产品信息</h2></div>
           <div class="sequence-product-info"><span>产品</span><strong id="sequenceProductName">—</strong></div>
-          <div class="sequence-facts"><div><strong id="sequenceAngleCount">0</strong><small>俯角</small></div><div><strong id="sequenceTotalFrames">0</strong><small>总帧</small></div><div><strong id="sequenceLoadedFrames">0</strong><small>已载入</small></div></div>
-          <div class="sequence-load-track"><i id="sequenceLoadBar"></i></div>
+          <div class="sequence-facts"><div><strong id="sequenceAngleCount">0</strong><small>俯角</small></div><div><strong id="sequenceTotalFrames">0</strong><small>总帧</small></div></div>
         </section>
       </div>
     </aside>
@@ -303,24 +290,6 @@ document.querySelector('#app').innerHTML = `
       <small id="modelLoadingText">请稍候…</small>
     </div>
   </div>
-  <dialog class="sequence-build-dialog" id="sequenceBuildDialog">
-    <form method="dialog">
-      <div class="build-dialog-heading"><div><span class="eyebrow">SEQUENCE CACHE</span><h2>构建缩略图缓存</h2></div><button id="sequenceBuildClose" type="button" aria-label="关闭">×</button></div>
-      <div id="sequenceBuildSetup">
-        <div class="build-summary" id="sequenceBuildSummary"></div>
-        <label class="build-size-label">目标最长边 <span><input id="sequenceBuildSize" type="number" min="64" max="8192" value="1600"><em>px</em></span></label>
-        <div class="build-presets">${[512,1024,1600,2048].map((size) => `<button type="button" data-sequence-size="${size}">${size}</button>`).join('')}</div>
-        <p class="build-note">保持原始比例、不裁切、不放大小图。重新构建会覆盖选中范围内的已有缓存。</p>
-        <button class="primary-button" id="sequenceBuildStart" type="button"><span class="button-label">开始构建</span><span class="button-meta">WebP · 85%</span></button>
-      </div>
-      <div id="sequenceBuildProgress" hidden>
-        <div class="build-progress-value"><strong id="sequenceBuildPercent">0%</strong><span id="sequenceBuildCounts">0 / 0</span></div>
-        <div class="build-progress-track"><i id="sequenceBuildBar"></i></div>
-        <p id="sequenceBuildCurrent">正在准备并行工作线程…</p>
-        <div class="build-result"><span>成功 <strong id="sequenceBuildSuccess">0</strong></span><span>失败 <strong id="sequenceBuildFailed">0</strong></span></div>
-      </div>
-    </form>
-  </dialog>
   <dialog class="thumbnail-variant-dialog" id="thumbnailVariantDialog">
     <form method="dialog">
       <div class="build-dialog-heading"><div><span class="eyebrow">MODEL COVER</span><h2>选择模型封面外观</h2></div><button id="thumbnailVariantCancel" type="button" aria-label="取消">×</button></div>
@@ -375,7 +344,6 @@ const libraryGrid = document.querySelector('#libraryGrid');
 const breadcrumbs = document.querySelector('#breadcrumbs');
 const contextMenu = document.querySelector('#modelContextMenu');
 const generateThumbnailButton = document.querySelector('#generateThumbnail');
-const generateSequenceCacheButton = document.querySelector('#generateSequenceCache');
 const contextMenuHint = document.querySelector('#contextMenuHint');
 const renderStudio = new RenderStudio(viewer, document.querySelector('#renderStudio'), { onMessage: showMessage });
 const appearanceVariantSelector = new AppearanceVariantSelector(viewer, document.querySelector('#appearanceVariants'));
@@ -404,12 +372,10 @@ const verticalShiftControls = [
   document.querySelector('#buildingCorrection'),
 ];
 let contextModel = null;
-let contextSequenceTarget = null;
 let contextModelFolder = null;
+let sequenceDownloading = false;
 let pendingThumbnailVariant = null;
 let pendingThumbnailBatchModels = [];
-let pendingSequenceBuildIds = [];
-let sequenceJobPoll = 0;
 let selectionDrag = null;
 let selectionDragClickBlock = false;
 const selectionBox = document.createElement('div');
@@ -467,12 +433,6 @@ function renderModelLibrary() {
     return;
   }
   library.setAttribute('aria-label', '模型库');
-  const batchMode = document.querySelector('#sequenceBatchMode');
-  const batchBuild = document.querySelector('#sequenceBatchBuild');
-  batchMode.hidden = true;
-  batchBuild.hidden = true;
-  batchBuild.textContent = `生成已选 (${state.selectedModelIds.size})`;
-  batchBuild.disabled = !state.selectedModelIds.size || !state.thumbnailWritable || state.thumbnailBatchRunning;
   updateSelectionHint(true);
   const searching = Boolean(state.libraryQuery.trim());
   const entries = searching
@@ -529,13 +489,7 @@ function renderModelLibrary() {
 
 function renderSequenceLibrary() {
   library.setAttribute('aria-label', '360度产品库');
-  const batchMode = document.querySelector('#sequenceBatchMode');
-  const batchBuild = document.querySelector('#sequenceBatchBuild');
-  batchMode.hidden = true;
-  batchBuild.hidden = true;
-  batchBuild.textContent = `构建已选 (${state.selectedSequenceIds.size})`;
-  batchBuild.disabled = !state.selectedSequenceIds.size || !sequenceWritable || state.sequenceJobRunning;
-  updateSelectionHint(state.sequenceSelectionMode);
+  updateSelectionHint(false);
   const searching = Boolean(state.libraryQuery.trim());
   const entries = searching
     ? { folders: [], products: filterLibraryItems(sequenceProducts, state.libraryQuery) }
@@ -555,31 +509,28 @@ function renderSequenceLibrary() {
       <span class="folder-icon back" aria-hidden="true"></span><strong>返回上一级</strong><small>${escapeHtml(sequenceParentFolder(state.sequenceFolder) || '全部产品')}</small></button>`] : []),
     ...entries.folders.map((folder) => {
       const path = state.sequenceFolder ? `${state.sequenceFolder}/${folder}` : folder;
-      return `<button class="library-card folder-card" type="button" data-sequence-folder="${escapeHtml(path)}" data-build-folder="${escapeHtml(path)}"><span class="folder-icon" aria-hidden="true"></span><strong>${escapeHtml(folder)}</strong><small>打开文件夹 · 右键构建</small></button>`;
+      return `<button class="library-card folder-card" type="button" data-sequence-folder="${escapeHtml(path)}"><span class="folder-icon" aria-hidden="true"></span><strong>${escapeHtml(folder)}</strong><small>打开文件夹</small></button>`;
     }),
   ];
-  const cards = entries.products.map((product) => `<button class="library-card sequence-card cache-${product.cacheStatus}${state.selectedSequence?.id === product.id ? ' selected' : ''}${state.selectedSequenceIds.has(product.id) ? ' batch-selected' : ''}" type="button" data-sequence-id="${escapeHtml(product.id)}">
-    <span class="thumbnail">${product.thumbnailUrl ? `<img src="${escapeHtml(product.thumbnailUrl)}" alt="" loading="lazy">` : '<span class="sequence-placeholder-icon" aria-hidden="true">360°</span>'}<b class="sequence-badge">${product.cacheStatus === 'ready' ? '360°' : '↓ 未构建'}</b>${state.sequenceSelectionMode ? `<span class="sequence-checkbox">${state.selectedSequenceIds.has(product.id) ? '✓' : ''}</span>` : ''}</span>
-    <strong>${escapeHtml(product.name)}</strong><small>${product.angles.length} 个俯角 · ${product.totalFrames} 帧 · ${product.cacheStatus === 'ready' ? `${product.maxSize}px` : '需要构建'}</small>
+  const cards = entries.products.map((product) => `<button class="library-card sequence-card${state.selectedSequence?.id === product.id ? ' selected' : ''}" type="button" data-sequence-id="${escapeHtml(product.id)}">
+    <span class="thumbnail"><img src="${escapeHtml(product.thumbnailUrl)}" alt="" loading="lazy" decoding="async" fetchpriority="low"><b class="sequence-badge">360°</b></span>
+    <strong>${escapeHtml(product.name)}</strong><small>${product.angles.length} 个俯角 · ${product.totalFrames} 帧</small>
   </button>`);
   libraryGrid.innerHTML = state.sequenceLibraryLoading
-    ? '<div class="library-empty">正在扫描 image_sequence 并清理失效缓存…</div>'
+    ? '<div class="library-empty">正在读取 360° 产品…</div>'
     : [...folders, ...cards].join('') || `<div class="library-empty">${searching ? `没有找到与“${escapeHtml(state.libraryQuery.trim())}”匹配的产品。` : 'image_sequence 中没有可用的帧序列产品。'}</div>`;
 }
 
 function closeContextMenu() {
   contextModel = null;
   contextModelFolder = null;
-  contextSequenceTarget = null;
   contextMenu.hidden = true;
 }
 
 function openContextMenu(event, model) {
   contextModel = model;
   contextModelFolder = null;
-  contextSequenceTarget = null;
   generateThumbnailButton.hidden = false;
-  generateSequenceCacheButton.hidden = true;
   generateThumbnailButton.disabled = !state.thumbnailCapabilityReady ||
     !state.thumbnailWritable || state.thumbnailGeneratingId !== null;
   generateThumbnailButton.textContent = state.selectedModelIds.size > 1
@@ -609,29 +560,28 @@ function positionContextMenu(event) {
   contextMenu.style.top = `${Math.max(8, Math.min(event.clientY, window.innerHeight - height - 8))}px`;
 }
 
-function openSequenceContextMenu(event, target) {
-  contextModel = null;
-  contextSequenceTarget = target;
-  generateThumbnailButton.hidden = true;
-  generateSequenceCacheButton.hidden = false;
-  generateSequenceCacheButton.disabled = !sequenceWritable || state.sequenceJobRunning;
-  generateSequenceCacheButton.textContent = target.type === 'folder' ? '递归构建此文件夹' : '构建此产品缓存';
-  contextMenuHint.textContent = !sequenceWritable ? '当前设备只读；请在服务主机上操作' : '按目标最长边等比生成 · 直接覆盖';
-  positionContextMenu(event);
-}
-
 async function reloadSequenceLibrary() {
+  if (state.sequenceLibraryLoading) return;
   state.sequenceLibraryLoading = true;
   if (state.mode === 'sequence') renderSequenceLibrary();
   try {
     await refreshSequenceLibrary();
     if (sequenceWarnings.length) console.warn('[360°图片]', ...sequenceWarnings);
-    if (state.selectedSequence) state.selectedSequence = sequenceProducts.find((item) => item.id === state.selectedSequence.id) ?? null;
-    const availableIds = new Set(sequenceProducts.map((item) => item.id));
-    state.selectedSequenceIds = new Set([...state.selectedSequenceIds].filter((id) => availableIds.has(id)));
+    if (state.selectedSequence) {
+      state.selectedSequence = sequenceProducts.find((item) => item.id === state.selectedSequence.id) ?? null;
+      if (state.mode === 'sequence' && !state.selectedSequence) {
+        sequenceViewer.unload();
+        updateSequenceUI();
+        document.querySelector('#sequenceToolbar').hidden = true;
+        state.modelLibraryOpen = true;
+        syncLibraryLayout();
+        library.hidden = false;
+        setStatus('等待选择产品');
+      }
+    }
   } catch (error) {
     console.error(error);
-    setStatus('产品库扫描失败', 'error');
+    if (state.mode === 'sequence') setStatus('产品库读取失败', 'error');
   } finally {
     state.sequenceLibraryLoading = false;
     if (state.mode === 'sequence') renderSequenceLibrary();
@@ -651,9 +601,7 @@ function thumbnailErrorMessage(error) {
 function openModelFolderContextMenu(event, folderPath) {
   contextModel = null;
   contextModelFolder = folderPath;
-  contextSequenceTarget = null;
   generateThumbnailButton.hidden = false;
-  generateSequenceCacheButton.hidden = true;
   const count = modelsInFolder(state.models, folderPath).length;
   generateThumbnailButton.disabled = !state.thumbnailWritable || state.thumbnailBatchRunning || count === 0;
   generateThumbnailButton.textContent = '递归生成此文件夹封面';
@@ -756,7 +704,6 @@ async function startThumbnailBatch() {
   state.thumbnailBatchRunning = false;
   const retryIds = new Set([...result.skippedIds, ...result.failedIds, ...result.pendingIds]);
   state.selectedModelIds = retryIds;
-  if (!retryIds.size) state.modelSelectionMode = false;
   renderModelLibrary(); renderThumbnailBatchProgress(null, result);
   document.querySelector('#thumbnailBatchCurrent').textContent = result.stopped ? '已停止，已完成结果保留。' : retryIds.size ? '任务完成，失败或跳过项已保留勾选。' : '全部模型封面生成完成。';
   const stop = document.querySelector('#thumbnailBatchStop');
@@ -783,10 +730,8 @@ function switchMode(mode) {
   if (!['model', 'sequence'].includes(mode) || state.mode === mode) return;
   state.mode = mode;
   state.libraryQuery = '';
-  state.modelSelectionMode = false;
   state.selectedModelIds.clear();
   shell.dataset.mode = mode;
-  sequenceViewer.stop();
   document.querySelectorAll('[data-mode]').forEach((button) => {
     const active = button.dataset.mode === mode;
     button.classList.toggle('active', active);
@@ -800,14 +745,18 @@ function switchMode(mode) {
   document.querySelector('#openLibrary').textContent = mode === 'model' ? '选择模型' : '选择产品';
   document.querySelector('#gestureTip').textContent = mode === 'model'
     ? '左键旋转 · 滚轮/双指缩放 · 右键平移'
-    : '左右旋转 · 上下切换俯角 · 滚轮/双指缩放';
+    : '左右循环旋转 · 上下切换俯角 · 滚轮/双指缩放';
   document.querySelector('#frameLabel').textContent = mode === 'model' ? `${state.width} × ${state.height} · ${(state.width / state.height).toFixed(2)}:1` : '360° PRODUCT VIEW';
   if (mode === 'sequence') {
-    setStatus(state.selectedSequence ? `正在载入 ${state.selectedSequence.name}` : '等待选择产品');
-    if (!state.selectedSequence) openModelLibrary();
-    else sequenceViewer.load(state.selectedSequence);
+    if (state.selectedSequence) {
+      selectSequence(state.selectedSequence);
+      reloadSequenceLibrary();
+    } else {
+      setStatus('等待选择产品');
+      updateSequenceUI();
+      openModelLibrary();
+    }
     requestAnimationFrame(() => sequenceViewer.resize());
-    reloadSequenceLibrary();
   } else {
     setStatus(state.selectedModel?.name || '等待选择模型', state.loaded ? 'ready' : '');
     if (!state.selectedModel) openModelLibrary();
@@ -816,123 +765,16 @@ function switchMode(mode) {
   renderModelLibrary();
 }
 
-async function selectSequence(product) {
+function selectSequence(product) {
   if (!product) return;
-  if (state.sequenceSelectionMode) {
-    if (state.selectedSequenceIds.has(product.id)) state.selectedSequenceIds.delete(product.id);
-    else state.selectedSequenceIds.add(product.id);
-    renderSequenceLibrary();
-    return;
-  }
-  if (product.cacheStatus !== 'ready') {
-    setStatus('缓存未构建', 'error');
-    setSequenceMessage('请右键产品并构建缩略图缓存后再查看。', 'error');
-    return;
-  }
   state.selectedSequence = product;
   state.modelLibraryOpen = false;
   syncLibraryLayout();
   library.hidden = true;
   document.querySelector('#sequenceToolbar').hidden = false;
-  document.querySelector('#sequenceDownload').disabled = true;
-  document.querySelector('#sequencePanelReset').disabled = true;
   setStatus(`正在载入 ${product.name}`);
-  setSequenceMessage('正在载入全部预览帧，完成后即可流畅旋转…');
-  document.querySelector('#sequenceProductName').textContent = product.name;
-  document.querySelector('#sequenceAngleCount').textContent = product.angles.length;
-  document.querySelector('#sequenceTotalFrames').textContent = product.totalFrames;
-  await sequenceViewer.load(product);
-}
-
-function selectedBuildProducts(ids) {
-  const wanted = new Set(ids);
-  return sequenceProducts.filter((product) => wanted.has(product.id));
-}
-
-function sourceResolutionSummary(products) {
-  const resolutions = products.flatMap((product) => product.resolutions ?? []);
-  if (!resolutions.length) return '无法读取';
-  const unique = [...new Map(resolutions.map((item) => [`${item.width}×${item.height}`, item])).values()];
-  if (unique.length === 1) return `${unique[0].width} × ${unique[0].height}`;
-  const pixels = unique.map((item) => item.width * item.height);
-  const smallest = unique[pixels.indexOf(Math.min(...pixels))];
-  const largest = unique[pixels.indexOf(Math.max(...pixels))];
-  return `${smallest.width} × ${smallest.height} — ${largest.width} × ${largest.height}（${unique.length} 种）`;
-}
-
-function openSequenceBuildDialog(ids) {
-  const products = selectedBuildProducts([...new Set(ids)]);
-  if (!products.length) return;
-  pendingSequenceBuildIds = products.map((product) => product.id);
-  const total = products.reduce((sum, product) => sum + product.totalFrames, 0);
-  const overwrite = products.filter((product) => product.cacheStatus === 'ready').reduce((sum, product) => sum + product.totalFrames, 0);
-  document.querySelector('#sequenceBuildSummary').innerHTML = `
-    <div><small>产品</small><strong>${products.length}</strong></div>
-    <div><small>总帧数</small><strong>${total}</strong></div>
-    <div class="wide"><small>源分辨率</small><strong>${escapeHtml(sourceResolutionSummary(products))}</strong></div>
-    <div class="wide"><small>缓存</small><strong>将覆盖 ${overwrite} 帧，构建 ${total} 帧</strong></div>`;
-  document.querySelector('#sequenceBuildSetup').hidden = false;
-  document.querySelector('#sequenceBuildProgress').hidden = true;
-  document.querySelector('#sequenceBuildClose').disabled = false;
-  document.querySelector('#sequenceBuildStart').disabled = !sequenceWritable;
-  document.querySelector('#sequenceBuildDialog').showModal();
-}
-
-function updateSequenceJob(job) {
-  const total = job.total || selectedBuildProducts(pendingSequenceBuildIds).reduce((sum, product) => sum + product.totalFrames, 0);
-  const completed = job.completed || 0;
-  const percent = total ? Math.round(completed / total * 100) : 0;
-  document.querySelector('#sequenceBuildPercent').textContent = `${percent}%`;
-  document.querySelector('#sequenceBuildCounts').textContent = `${completed} / ${total}`;
-  document.querySelector('#sequenceBuildBar').style.width = `${percent}%`;
-  document.querySelector('#sequenceBuildSuccess').textContent = job.succeeded || 0;
-  document.querySelector('#sequenceBuildFailed').textContent = job.failed || 0;
-  const done = ['completed', 'completed_with_errors', 'failed'].includes(job.status);
-  document.querySelector('#sequenceBuildCurrent').textContent = done
-    ? job.status === 'completed' ? '构建完成，产品库已刷新。' : `构建完成，${job.failed || 0} 帧失败。`
-    : job.currentProduct ? `正在构建：${job.currentProduct}` : '正在准备并行工作线程…';
-  if (done) document.querySelector('#sequenceBuildClose').disabled = false;
-  return done;
-}
-
-async function pollSequenceJob() {
-  clearTimeout(sequenceJobPoll);
-  try {
-    const response = await fetch('/__sequence/job', { cache: 'no-store' });
-    const job = await response.json();
-    if (updateSequenceJob(job)) {
-      state.sequenceJobRunning = false;
-      await reloadSequenceLibrary();
-      return;
-    }
-  } catch (error) {
-    console.error(error);
-  }
-  sequenceJobPoll = setTimeout(pollSequenceJob, 250);
-}
-
-async function startSequenceBuild() {
-  const maxSize = Number(document.querySelector('#sequenceBuildSize').value);
-  if (!Number.isInteger(maxSize) || maxSize < 64 || maxSize > 8192) {
-    document.querySelector('#sequenceBuildSize').focus();
-    return;
-  }
-  state.sequenceJobRunning = true;
-  document.querySelector('#sequenceBuildSetup').hidden = true;
-  document.querySelector('#sequenceBuildProgress').hidden = false;
-  document.querySelector('#sequenceBuildClose').disabled = true;
-  try {
-    const response = await fetch('/__sequence/job', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ productIds: pendingSequenceBuildIds, maxSize }),
-    });
-    if (!response.ok) throw new Error((await response.json()).error || `BUILD_${response.status}`);
-    await pollSequenceJob();
-  } catch (error) {
-    state.sequenceJobRunning = false;
-    updateSequenceJob({ status: 'failed', failed: 0 });
-    document.querySelector('#sequenceBuildCurrent').textContent = `无法开始构建：${error.message}`;
-  }
+  setSequenceMessage('');
+  sequenceViewer.load(product);
 }
 
 function setSequenceMessage(text, type = '') {
@@ -942,36 +784,41 @@ function setSequenceMessage(text, type = '') {
 }
 
 function updateSequenceUI(detail = sequenceViewer.snapshot()) {
-  const frame = detail.frame;
+  const { frame, product, ready, loading, buffering, frameFailed } = detail;
   document.querySelector('#sequenceAngle').textContent = detail.angle === null ? '俯角 —' : `俯角 ${detail.angle}°`;
   document.querySelector('#sequencePanelAngle').textContent = detail.angle === null ? '—' : `${detail.angle}°`;
   document.querySelector('#sequenceFrame').textContent = detail.frameCount ? `${detail.framePosition} / ${detail.frameCount}` : '— / —';
   document.querySelector('#sequenceScale').textContent = `${Math.round(detail.scale * 100)}%`;
-  document.querySelector('#sequenceFilename').textContent = frame?.originalFilename ?? '尚未选择产品';
+  document.querySelector('#sequenceFilename').textContent = frame?.originalFilename ?? (product ? '—' : '尚未选择产品');
+  document.querySelector('#sequenceResolution').textContent = frame?.width && frame?.height ? `${frame.width} × ${frame.height} PNG` : '';
   document.querySelector('#sequenceDownloadMeta').textContent = frame ? `帧 ${frame.index}` : '原图';
-  document.querySelector('#sequenceLoadedFrames').textContent = detail.loaded;
-  document.querySelector('#sequenceLoadBar').style.width = `${detail.total ? detail.loaded / detail.total * 100 : 0}%`;
-  const progress = detail.total ? Math.round(detail.loaded / detail.total * 100) : 0;
-  document.querySelector('#sequenceLoadingProduct').textContent = detail.product?.name || '载入产品帧序列…';
-  document.querySelector('#sequenceLoadingText').textContent = `${detail.loaded} / ${detail.total} · ${progress}%`;
-  document.querySelector('#sequenceLoadingBar').style.width = `${progress}%`;
-  document.querySelector('#sequenceLoadingTitle').textContent = detail.failed
-    ? `${detail.failed} 帧加载失败`
-    : detail.ready ? '360° 图片已准备完成' : '正在准备 360° 图片';
-  document.querySelector('#sequenceRetry').hidden = !detail.failed || detail.loading;
-  document.querySelector('#sequenceDownload').disabled = !frame || !detail.ready;
-  document.querySelector('#sequencePanelReset').disabled = !detail.ready;
+  document.querySelector('#sequenceProductName').textContent = product?.name ?? '—';
+  document.querySelector('#sequenceAngleCount').textContent = product?.angles.length ?? 0;
+  document.querySelector('#sequenceTotalFrames').textContent = detail.total;
+  const loadingProduct = document.querySelector('#sequenceLoadingProduct');
+  loadingProduct.textContent = product?.name ?? '';
+  loadingProduct.hidden = !product;
+  document.querySelector('#sequenceSpinner').hidden = !loading;
+  document.querySelector('#sequenceLoadingTitle').textContent = !product ? '请选择 360° 产品'
+    : loading ? '正在加载首张图片' : '无法加载产品图片';
+  document.querySelector('#sequenceRetry').hidden = !product || ready || loading;
+  document.querySelector('#sequenceFrameStatus').hidden = !ready || (!buffering && !frameFailed);
+  const frameStatus = document.querySelector('#sequenceFrameStatusText');
+  const frameStatusText = frameFailed ? '这张图片加载失败' : buffering ? '正在加载画面…' : '';
+  if (frameStatus.textContent !== frameStatusText) frameStatus.textContent = frameStatusText;
+  document.querySelector('#sequenceRetryFrame').hidden = !frameFailed;
+  document.querySelector('#sequenceDownload').disabled = !frame || !ready || sequenceDownloading;
+  document.querySelector('#sequenceReset').disabled = !ready;
+  document.querySelector('#sequencePanelReset').disabled = !ready;
   document.querySelector('#sequenceAutoToggle').checked = detail.playing;
-  document.querySelector('#sequenceAutoToggle').disabled = !detail.ready;
-  document.querySelector('#sequenceLoopToggle').checked = detail.loop;
-  document.querySelector('#sequenceLoopToggle').disabled = !detail.product;
+  document.querySelector('#sequenceAutoToggle').disabled = !ready;
   document.querySelector('#sequenceReverseToggle').checked = detail.reverse;
   document.querySelector('#sequenceReverseToggle').disabled = !detail.product;
   document.querySelector('#sequencePlaybackStatus').textContent = detail.playbackComplete
     ? '已播放完成'
     : '以每秒 8 帧播放一次';
   const play = document.querySelector('#sequencePlay');
-  play.disabled = !detail.ready;
+  play.disabled = !ready;
   play.classList.toggle('active', detail.playing);
   play.setAttribute('aria-pressed', String(detail.playing));
   play.innerHTML = detail.playing ? '<span>Ⅱ</span> 暂停旋转' : detail.playbackComplete
@@ -980,11 +827,13 @@ function updateSequenceUI(detail = sequenceViewer.snapshot()) {
 
 async function downloadSequenceFrame() {
   const frame = sequenceViewer.frame;
-  if (!frame) return;
+  if (!frame || sequenceDownloading) return;
+  const product = sequenceViewer.product;
+  sequenceDownloading = true;
   const button = document.querySelector('#sequenceDownload');
   button.disabled = true;
   button.querySelector('.button-label').textContent = '正在准备原图…';
-  setSequenceMessage('正在读取 3000 × 3000 原始 PNG…');
+  setSequenceMessage('正在读取原始 PNG…');
   try {
     const response = await fetch(frame.originalUrl);
     if (!response.ok) throw new Error(`HTTP_${response.status}`);
@@ -995,12 +844,13 @@ async function downloadSequenceFrame() {
     link.download = frame.originalFilename;
     link.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
-    setSequenceMessage(`已保存原始帧 ${frame.index}。`, 'success');
+    if (sequenceViewer.product === product) setSequenceMessage(`已保存原始帧 ${frame.index}。`, 'success');
   } catch (error) {
     console.error(error);
-    setSequenceMessage('原始图片下载失败，请检查网络后重试。', 'error');
+    if (sequenceViewer.product === product) setSequenceMessage('原始图片下载失败，请检查网络后重试。', 'error');
   } finally {
-    button.disabled = !sequenceViewer.ready;
+    sequenceDownloading = false;
+    button.disabled = !sequenceViewer.ready || !sequenceViewer.frame;
     button.querySelector('.button-label').textContent = '保存原始 PNG';
   }
 }
@@ -1725,26 +1575,16 @@ document.querySelector('#clearLibrarySearch').addEventListener('click', () => {
 document.querySelectorAll('[data-mode]').forEach((button) => button.addEventListener('click', () => switchMode(button.dataset.mode)));
 
 function selectionModeActive() {
-  return state.mode === 'model' ? true : state.sequenceSelectionMode;
-}
-
-function selectionSet() {
-  return state.mode === 'model' ? state.selectedModelIds : state.selectedSequenceIds;
-}
-
-function cardSelectionId(card) {
-  return state.mode === 'model' ? card.dataset.modelId : card.dataset.sequenceId;
+  return state.mode === 'model';
 }
 
 function selectionCards() {
-  const selector = state.mode === 'model' ? '[data-model-id]' : '[data-sequence-id]';
-  return [...libraryGrid.querySelectorAll(selector)];
+  return [...libraryGrid.querySelectorAll('[data-model-id]')];
 }
 
 function updateSelectionVisuals() {
-  const selected = selectionSet();
   for (const card of selectionCards()) {
-    const active = selected.has(cardSelectionId(card));
+    const active = state.selectedModelIds.has(card.dataset.modelId);
     card.classList.toggle('batch-selected', active);
     card.querySelector('.selection-indicator')?.toggleAttribute('hidden', !active);
   }
@@ -1774,18 +1614,16 @@ function updateSelectionDrag(event) {
     const intersects = rect.left < dragRect.right && rect.right > dragRect.left &&
       rect.top < dragRect.bottom && rect.bottom > dragRect.top;
     if (!intersects) continue;
-    intersectingIds.add(cardSelectionId(card));
-    next.add(cardSelectionId(card));
+    intersectingIds.add(card.dataset.modelId);
+    next.add(card.dataset.modelId);
   }
   if (!selectionDrag.additive) {
     for (const id of selectionDrag.baseSelection) {
       if (!intersectingIds.has(id)) next.delete(id);
     }
   }
-  selectionSet().clear();
-  next.forEach((id) => selectionSet().add(id));
-  if (state.mode === 'model') updateSelectionVisuals();
-  else renderSequenceLibrary();
+  state.selectedModelIds = next;
+  updateSelectionVisuals();
 }
 
 function finishSelectionDrag() {
@@ -1804,7 +1642,7 @@ libraryGrid.addEventListener('pointerdown', (event) => {
   selectionDrag = {
     startX: event.clientX,
     startY: event.clientY,
-    baseSelection: new Set(selectionSet()),
+    baseSelection: new Set(state.selectedModelIds),
     additive: event.shiftKey || event.ctrlKey || event.metaKey,
     cards: selectionCards().map((card) => ({ card, rect: card.getBoundingClientRect() })),
     moved: false,
@@ -1828,7 +1666,6 @@ library.addEventListener('click', (event) => {
   const sequenceFolderButton = event.target.closest('[data-sequence-folder]');
   if (sequenceFolderButton) {
     state.sequenceFolder = sequenceFolderButton.dataset.sequenceFolder;
-    state.selectedSequenceIds.clear();
     renderModelLibrary();
     return;
   }
@@ -1868,21 +1705,12 @@ library.addEventListener('dblclick', (event) => {
 library.addEventListener('pointerdown', (event) => {
   if (event.button !== 0 || event.target.closest('[data-model-id], [data-folder], [data-sequence-id], [data-sequence-folder]')) return;
   if (selectionModeActive()) {
-    selectionSet().clear();
-    if (state.mode === 'model') renderModelLibrary();
-    else renderSequenceLibrary();
+    state.selectedModelIds.clear();
+    renderModelLibrary();
   }
 });
 library.addEventListener('contextmenu', (event) => {
-  if (window.matchMedia('(pointer: coarse)').matches) return;
-  const sequenceCard = event.target.closest('[data-sequence-id]');
-  const sequenceFolder = event.target.closest('[data-build-folder]');
-  if (state.mode === 'sequence' && (sequenceCard || sequenceFolder)) {
-    event.preventDefault();
-    if (sequenceCard) openSequenceContextMenu(event, { type: 'product', id: sequenceCard.dataset.sequenceId });
-    else openSequenceContextMenu(event, { type: 'folder', id: sequenceFolder.dataset.buildFolder });
-    return;
-  }
+  if (state.mode !== 'model' || window.matchMedia('(pointer: coarse)').matches) return;
   const modelCard = event.target.closest('[data-model-id]');
   const modelFolder = event.target.closest('[data-thumbnail-folder]');
   if (!modelCard && !modelFolder) return;
@@ -1916,28 +1744,6 @@ document.querySelector('#thumbnailVariantDialog').addEventListener('cancel', (ev
   event.preventDefault();
   finishThumbnailVariantChoice(null);
 });
-generateSequenceCacheButton.addEventListener('click', () => {
-  if (!contextSequenceTarget) return;
-  const ids = contextSequenceTarget.type === 'product' ? [contextSequenceTarget.id]
-    : sequenceProducts.filter((product) => product.id.startsWith(`${contextSequenceTarget.id}/`)).map((product) => product.id);
-  closeContextMenu();
-  openSequenceBuildDialog(ids);
-});
-document.querySelector('#sequenceBatchMode').addEventListener('click', () => {
-  if (state.mode === 'model') {
-    state.modelSelectionMode = !state.modelSelectionMode;
-    if (!state.modelSelectionMode) state.selectedModelIds.clear();
-    renderModelLibrary();
-  } else {
-    state.sequenceSelectionMode = !state.sequenceSelectionMode;
-    state.selectedSequenceIds.clear();
-    renderSequenceLibrary();
-  }
-});
-document.querySelector('#sequenceBatchBuild').addEventListener('click', () => {
-  if (state.mode === 'model') openThumbnailBatchDialog(state.models.filter((model) => state.selectedModelIds.has(model.id)));
-  else openSequenceBuildDialog([...state.selectedSequenceIds]);
-});
 document.querySelector('#thumbnailBatchStart').addEventListener('click', startThumbnailBatch);
 document.querySelector('#thumbnailBatchStop').addEventListener('click', () => {
   if (state.thumbnailBatchRunning) {
@@ -1948,16 +1754,6 @@ document.querySelector('#thumbnailBatchStop').addEventListener('click', () => {
 });
 document.querySelector('#thumbnailBatchClose').addEventListener('click', () => { if (!state.thumbnailBatchRunning) document.querySelector('#thumbnailBatchDialog').close(); });
 document.querySelector('#thumbnailBatchDialog').addEventListener('cancel', (event) => { if (state.thumbnailBatchRunning) event.preventDefault(); });
-document.querySelectorAll('[data-sequence-size]').forEach((button) => button.addEventListener('click', () => {
-  document.querySelector('#sequenceBuildSize').value = button.dataset.sequenceSize;
-}));
-document.querySelector('#sequenceBuildStart').addEventListener('click', startSequenceBuild);
-document.querySelector('#sequenceBuildClose').addEventListener('click', () => {
-  if (!state.sequenceJobRunning) document.querySelector('#sequenceBuildDialog').close();
-});
-document.querySelector('#sequenceBuildDialog').addEventListener('cancel', (event) => {
-  if (state.sequenceJobRunning) event.preventDefault();
-});
 document.addEventListener('click', (event) => {
   if (!contextMenu.hidden && !contextMenu.contains(event.target)) closeContextMenu();
 });
@@ -1966,42 +1762,29 @@ document.addEventListener('keydown', (event) => {
 });
 libraryGrid.addEventListener('scroll', closeContextMenu, { passive: true });
 
-sequenceViewer.addEventListener('change', (event) => updateSequenceUI(event.detail));
-sequenceViewer.addEventListener('progress', (event) => updateSequenceUI(event.detail));
-sequenceViewer.addEventListener('playchange', (event) => updateSequenceUI(event.detail));
-sequenceViewer.addEventListener('loopchange', (event) => updateSequenceUI(event.detail));
-sequenceViewer.addEventListener('reversechange', (event) => updateSequenceUI(event.detail));
-sequenceViewer.addEventListener('playcomplete', (event) => {
-  updateSequenceUI(event.detail);
-  setSequenceMessage('本轮旋转已播放完成。', 'success');
-});
+for (const type of ['change', 'progress', 'playchange', 'playcomplete', 'reversechange', 'frameerror']) {
+  sequenceViewer.addEventListener(type, (event) => updateSequenceUI(event.detail));
+}
 sequenceViewer.addEventListener('ready', (event) => {
   updateSequenceUI(event.detail);
-  setStatus(state.selectedSequence.name, 'ready');
-  setSequenceMessage('全部预览帧已载入，可以流畅旋转查看。', 'success');
-});
-sequenceViewer.addEventListener('frameerror', (event) => {
-  updateSequenceUI(event.detail);
-  setSequenceMessage('有预览帧载入失败，完成检查后可以重新加载。', 'error');
+  if (state.mode === 'sequence') setStatus(event.detail.product.name, 'ready');
 });
 sequenceViewer.addEventListener('loaderror', (event) => {
   updateSequenceUI(event.detail);
-  setStatus(`${event.detail.failed} 帧载入失败`, 'error');
-  setSequenceMessage('部分预览帧未能载入，请点击“重新加载失败帧”。原始 PNG 未受影响。', 'error');
+  if (!event.detail.ready && state.mode === 'sequence') setStatus('图片加载失败', 'error');
 });
-sequenceViewer.addEventListener('viewererror', () => {
-  setStatus('载入失败', 'error');
-  setSequenceMessage('产品帧序列为空，请重新选择或检查图片。', 'error');
+sequenceViewer.addEventListener('viewererror', (event) => {
+  updateSequenceUI(event.detail);
+  if (state.mode === 'sequence') setStatus('没有可用图片', 'error');
 });
 document.querySelector('#sequencePlay').addEventListener('click', () => sequenceViewer.setPlaying(!sequenceViewer.playing));
 document.querySelector('#sequenceAutoToggle').addEventListener('change', (event) => sequenceViewer.setPlaying(event.target.checked));
-document.querySelector('#sequenceLoopToggle').addEventListener('change', (event) => sequenceViewer.setLoop(event.target.checked));
 document.querySelector('#sequenceReverseToggle').addEventListener('change', (event) => sequenceViewer.setReverse(event.target.checked));
 document.querySelector('#sequenceRetry').addEventListener('click', () => {
   setStatus(`正在重试 ${state.selectedSequence?.name || '产品'}`);
-  setSequenceMessage('正在重新加载失败帧…');
   sequenceViewer.retryFailed();
 });
+document.querySelector('#sequenceRetryFrame').addEventListener('click', () => sequenceViewer.retryFailed());
 document.querySelector('#sequenceReset').addEventListener('click', () => sequenceViewer.reset());
 document.querySelector('#sequencePanelReset').addEventListener('click', () => sequenceViewer.reset());
 document.querySelector('#sequenceDownload').addEventListener('click', downloadSequenceFrame);

@@ -4,7 +4,6 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "sequence:prepare": "node scripts/generate-sequence-previews.mjs",
     "environment:preprocess": "node scripts/preprocess-environments.mjs --size 2048",
     "dev": "vite --host 0.0.0.0",
     "build": "vite build && node scripts/create-static-launcher.mjs",

@@ -1,45 +1,41 @@
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+const frameSource = (frame) => frame?.dragUrl ?? frame?.previewUrl ?? frame?.originalUrl;
+const detailSource = (frame) => frame?.dragUrl && frame.previewUrl !== frame.dragUrl ? frame.previewUrl : undefined;
+const MAX_DRAG_LAG = 8;
 
-export function buildPreloadOrder(product, angleIndex = 0, frameIndex = 0) {
-  if (!product?.angles?.length) return [];
-  const currentAngle = product.angles[angleIndex];
-  const currentFrames = currentAngle.frames;
-  const order = [currentFrames[frameIndex]];
-  for (let distance = 1; distance <= 3; distance++) {
-    order.push(currentFrames[(frameIndex + distance) % currentFrames.length]);
-    order.push(currentFrames[(frameIndex - distance + currentFrames.length) % currentFrames.length]);
+export function buildPreloadOrder(product, angleIndex = 0, frameIndex = 0, { radius = 3, direction = 1 } = {}) {
+  const frames = product?.angles[angleIndex]?.frames;
+  if (!frames?.length) return [];
+  const current = frames[frameIndex];
+  const order = [current];
+  for (let distance = 1; distance <= Math.min(radius, frames.length - 1); distance++) {
+    order.push(frames[manualFrameIndex(frameIndex + distance * direction, frames.length)]);
+    order.push(frames[manualFrameIndex(frameIndex - distance * direction, frames.length)]);
   }
-  order.push(...currentFrames);
-  for (const angle of product.angles) if (angle !== currentAngle) order.push(...angle.frames);
-  return [...new Map(order.filter(Boolean).map((frame) => [frame.previewUrl, frame])).values()];
+  for (const index of [angleIndex - 1, angleIndex + 1]) {
+    const adjacent = product.angles[index]?.frames;
+    if (adjacent?.length) order.push(adjacent.find((frame) => frame.index === current?.index)
+      ?? adjacent[Math.min(frameIndex, adjacent.length - 1)]);
+  }
+  return [...new Map(order.filter(frameSource).map((frame) => [frameSource(frame), frame])).values()];
 }
 
-export function nextPlaybackFrame(frameIndex, frameCount) {
-  if (frameCount <= 0) return { index: 0, complete: true };
-  if (frameIndex < frameCount - 1) return { index: frameIndex + 1, complete: false };
-  return { index: frameIndex, complete: true };
-}
-
-export function manualFrameIndex(index, frameCount, loop) {
+export function manualFrameIndex(index, frameCount, loop = true) {
   if (frameCount <= 0) return 0;
   return loop ? ((index % frameCount) + frameCount) % frameCount : clamp(index, 0, frameCount - 1);
 }
 
 export function horizontalDragFrame(startFrame, deltaX, reverse = false, pixelsPerFrame = 18) {
-  const frameDelta = deltaX / pixelsPerFrame * (reverse ? 1 : -1);
-  return startFrame + frameDelta;
+  return startFrame + deltaX / pixelsPerFrame * (reverse ? 1 : -1);
 }
 
 export function blendFrameState(position, frameCount, loop = false) {
   if (frameCount <= 0) return { position: 0, current: 0, next: 0, progress: 0, display: 0 };
-  const normalized = loop
-    ? ((position % frameCount) + frameCount) % frameCount
-    : clamp(position, 0, frameCount - 1);
+  const normalized = manualFrameIndex(position, frameCount, loop);
   const current = Math.floor(normalized);
-  const next = loop ? (current + 1) % frameCount : Math.min(current + 1, frameCount - 1);
+  const next = manualFrameIndex(current + 1, frameCount, loop);
   const progress = next === current ? 0 : normalized - current;
-  const display = progress >= .5 ? next : current;
-  return { position: normalized, current, next, progress, display };
+  return { position: normalized, current, next, progress, display: progress >= .5 ? next : current };
 }
 
 export function smoothstep(value) {
@@ -48,37 +44,40 @@ export function smoothstep(value) {
 }
 
 export class SequenceViewer extends EventTarget {
-  constructor(root, { concurrency = 6 } = {}) {
+  constructor(root, { concurrency = 4, maxImages = 12 } = {}) {
     super();
     this.root = root;
     this.canvas = root.querySelector('canvas');
     this.context = this.canvas.getContext('2d', { alpha: true });
-    this.concurrency = concurrency;
+    this.maxImages = Math.max(3, maxImages);
+    this.concurrency = clamp(concurrency, 1, this.maxImages);
     this.product = null;
     this.angleIndex = 0;
+    this.requestedAngleIndex = 0;
     this.frameIndex = 0;
     this.renderPosition = 0;
+    this.painted = null;
     this.scale = 1;
     this.offsetX = 0;
     this.offsetY = 0;
     this.images = new Map();
     this.inFlight = new Map();
-    this.loadedKeys = new Set();
     this.failed = new Set();
+    this.retried = new Set();
     this.pointers = new Map();
     this.gesture = null;
-    this.loadToken = 0;
+    this.finishInitialLoad = null;
     this.loading = false;
     this.ready = false;
     this.playing = false;
-    this.loop = false;
     this.reverse = true;
+    this.requestDirection = 1;
     this.playbackComplete = false;
     this.playTimer = 0;
     this.renderFrame = 0;
     this.pendingRenderPosition = null;
     this.playStartedAt = null;
-    this.playStartFrame = 0;
+    this.playFrame = 0;
     this.reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(root);
@@ -86,14 +85,25 @@ export class SequenceViewer extends EventTarget {
   }
 
   get angle() { return this.product?.angles[this.angleIndex] ?? null; }
-  get frame() { return this.angle?.frames[this.frameIndex] ?? null; }
+  get requestedAngle() { return this.product?.angles[this.requestedAngleIndex] ?? null; }
+  get requestedFrame() { return this.requestedAngle?.frames[this.blendState().display] ?? null; }
+  get frame() { return this.ready ? this.angle?.frames[this.frameIndex] ?? null : null; }
   get total() { return this.product?.totalFrames ?? 0; }
+  get frameFailed() { return this.failed.has(frameSource(this.requestedFrame)); }
+  get dragging() {
+    return this.gesture?.mode === 'horizontal' && this.gesture.angle === this.requestedAngleIndex;
+  }
+  get buffering() {
+    const key = this.imageSource(this.requestedFrame);
+    return this.ready && Boolean(key) && !this.images.has(key) && !this.frameFailed;
+  }
 
   emit(type, detail = {}) {
     this.dispatchEvent(new CustomEvent(type, { detail: { ...this.snapshot(), ...detail } }));
   }
 
   snapshot() {
+    const progress = this.painted?.progress ?? 0;
     return {
       product: this.product,
       angle: this.angle?.angle ?? null,
@@ -102,136 +112,210 @@ export class SequenceViewer extends EventTarget {
       frameCount: this.angle?.frames.length ?? 0,
       framePositionFloat: this.renderPosition,
       displayFrameIndex: this.frameIndex,
-      transitionProgress: this.blendState().progress,
-      transitioning: this.blendState().progress > 0,
-      loaded: this.loadedKeys.size,
+      transitionProgress: progress,
+      transitioning: progress > 0,
+      resident: this.images.size,
       total: this.total,
       failed: this.failed.size,
+      frameFailed: this.frameFailed,
+      buffering: this.buffering,
       scale: this.scale,
       loading: this.loading,
       ready: this.ready,
       playing: this.playing,
-      loop: this.loop,
       reverse: this.reverse,
       playbackComplete: this.playbackComplete,
     };
   }
 
   async load(product) {
-    const retainedLoop = this.loop;
-    const retainedReverse = this.reverse;
     this.unload();
-    this.loop = retainedLoop;
-    this.reverse = retainedReverse;
     this.product = product;
-    this.angleIndex = product.angles.reduce((best, item, index, list) =>
+    this.requestedAngleIndex = product.angles.reduce((best, item, index, list) =>
       Math.abs(item.angle - 5) < Math.abs(list[best].angle - 5) ? index : best, 0);
-    this.frameIndex = 0;
-    this.renderPosition = 0;
-    this.loading = true;
-    const token = this.loadToken;
-    this.emit('change');
-    await this.loadAll(token);
-  }
-
-  async loadAll(token, frames = buildPreloadOrder(this.product, this.angleIndex, this.frameIndex)) {
-    if (!frames.length) {
-      this.loading = false;
+    this.angleIndex = this.requestedAngleIndex;
+    if (!this.requestedAngle?.frames.length) {
       this.emit('viewererror', { error: new Error('EMPTY_SEQUENCE') });
       return;
     }
-    const queue = [...frames];
-    const worker = async () => {
-      while (queue.length && token === this.loadToken) {
-        const frame = queue.shift();
-        if (this.images.has(this.frameKey(frame))) continue;
-        try { await this.loadFrame(frame, token); } catch { /* collect failures and finish the queue */ }
-      }
-    };
-    await Promise.all(Array.from({ length: Math.min(this.concurrency, queue.length) }, worker));
-    if (token !== this.loadToken) return;
-    this.loading = false;
-    this.ready = this.failed.size === 0 && this.loadedKeys.size === this.total;
-    this.root.classList.toggle('ready', this.ready);
-    this.emit(this.ready ? 'ready' : 'loaderror');
+    this.loading = true;
+    const firstFrame = new Promise((resolve) => { this.finishInitialLoad = resolve; });
+    this.emit('change');
+    this.preload();
+    await firstFrame;
   }
 
-  async retryFailed() {
-    if (!this.product || this.loading || !this.failed.size) return;
-    const failedFrames = this.product.angles.flatMap((angle) => angle.frames)
-      .filter((frame) => this.failed.has(this.frameKey(frame)));
+  retryFailed() {
+    if (!this.product || !this.failed.size) return;
     this.failed.clear();
-    this.loading = true;
+    this.retried.clear();
+    this.loading = !this.ready;
+    this.preload();
     this.emit('progress');
-    await this.loadAll(this.loadToken, failedFrames);
   }
 
   unload() {
-    this.loadToken++;
-    this.stop();
-    for (const { image } of this.inFlight.values()) image.src = '';
-    for (const image of this.images.values()) image.src = '';
+    this.playing = false;
+    cancelAnimationFrame(this.playTimer);
+    this.playTimer = 0;
+    this.playStartedAt = null;
+    this.finishInitialLoad?.();
+    this.finishInitialLoad = null;
+    for (const key of this.inFlight.keys()) this.cancelFrame(key);
+    for (const image of this.images.values()) this.releaseImage(image);
     this.product = null;
     this.images.clear();
-    this.inFlight.clear();
-    this.loadedKeys.clear();
     this.failed.clear();
+    this.retried.clear();
     this.pointers.clear();
     this.gesture = null;
+    this.painted = null;
     this.loading = false;
     this.ready = false;
     this.playbackComplete = false;
+    this.angleIndex = this.requestedAngleIndex = this.frameIndex = 0;
     this.renderPosition = 0;
+    this.requestDirection = 1;
     this.pendingRenderPosition = null;
     cancelAnimationFrame(this.renderFrame);
     this.renderFrame = 0;
-    this.root.classList.remove('ready', 'has-preview');
-    this.reset(false);
+    this.root.classList.remove('ready');
+    this.scale = 1;
+    this.offsetX = this.offsetY = 0;
     this.draw();
   }
 
-  frameKey(frame) { return frame?.previewUrl; }
-
-  blendState(position = this.renderPosition) {
-    return blendFrameState(position, this.angle?.frames.length ?? 0, this.loop);
+  blendState(position = this.renderPosition, loop = !this.playing) {
+    return blendFrameState(position, this.requestedAngle?.frames.length ?? 0, loop);
   }
 
-  loadFrame(frame, token = this.loadToken, retry = true) {
-    if (!frame) return Promise.reject(new Error('EMPTY_SEQUENCE'));
-    const key = this.frameKey(frame);
-    if (this.images.has(key)) return Promise.resolve(this.images.get(key));
-    if (this.inFlight.has(key)) return this.inFlight.get(key).promise;
+  releaseImage(image) {
+    image.onload = image.onerror = null;
+    image.removeAttribute('src');
+  }
+
+  cancelFrame(key) {
+    this.releaseImage(this.inFlight.get(key));
+    this.inFlight.delete(key);
+  }
+
+  preloadKeys() {
+    const blend = this.blendState();
+    const frames = this.requestedAngle?.frames;
+    const nearby = buildPreloadOrder(this.product, this.requestedAngleIndex, blend.display,
+      { direction: this.requestDirection }).map(frameSource);
+    if (blend.progress > .001 && !this.reducedMotion.matches) {
+      const other = blend.display === blend.current ? blend.next : blend.current;
+      nearby.splice(1, 0, frameSource(frames[other]));
+    }
+    if (this.playing) nearby.splice(1, 0, frameSource(frames[this.nextPlayableFrame()]));
+    const detail = detailSource(frames?.[blend.display]);
+    if (detail && !this.dragging && !this.playing && this.images.has(nearby[0])) nearby.splice(1, 0, detail);
+    // Leave space for the last painted view until its replacement can be drawn.
+    const retained = new Set([this.painted?.current, this.painted?.next].filter(Boolean));
+    const queue = [];
+    for (const key of new Set(nearby.filter(Boolean))) {
+      if (!retained.has(key) && retained.size >= this.maxImages) continue;
+      retained.add(key);
+      queue.push(key);
+    }
+    if (!this.ready && queue.every((key) => this.failed.has(key))) {
+      // Keep looking for the first usable frame when the initial window is damaged.
+      for (const { frames: candidates } of this.product.angles) {
+        const fallback = candidates.find((frame) => frameSource(frame) && !this.failed.has(frameSource(frame)));
+        if (!fallback) continue;
+        queue.push(frameSource(fallback));
+        break;
+      }
+    }
+    return queue;
+  }
+
+  preload() {
+    if (!this.product) return;
+    const queue = this.preloadKeys();
+    const wanted = new Set(queue);
+    this.trimImages(wanted);
+    // A sliding drag target can outrun a conversion. Give the current ring's
+    // active requests time to finish, then use the newest target for free slots.
+    const dragSources = this.dragging ? this.gesture.sources : null;
+    for (const key of this.inFlight.keys()) {
+      if (!wanted.has(key) && !dragSources?.has(key)) this.cancelFrame(key);
+    }
+    const needed = queue.filter((key) => !this.images.has(key) && !this.inFlight.has(key) && !this.failed.has(key));
+    const requested = frameSource(this.requestedFrame);
+    if (!dragSources && requested && needed[0] === requested && this.inFlight.size === this.concurrency) {
+      const lowestPriority = queue.findLast((key) => this.inFlight.has(key));
+      if (lowestPriority) this.cancelFrame(lowestPriority);
+    }
+    for (const key of needed.slice(0, this.concurrency - this.inFlight.size)) this.loadFrame(key);
+    if (this.loading && !this.inFlight.size) this.finishLoading('loaderror');
+  }
+
+  finishLoading(event) {
+    this.loading = false;
+    this.finishInitialLoad?.();
+    this.finishInitialLoad = null;
+    this.emit(event);
+  }
+
+  loadFrame(key) {
     const image = new Image();
     image.decoding = 'async';
-    const promise = new Promise((resolve, reject) => {
-      image.onload = () => {
-        this.inFlight.delete(key);
-        if (token !== this.loadToken) return resolve(image);
-        this.images.set(key, image);
-        this.loadedKeys.add(key);
-        this.failed.delete(key);
-        this.emit('progress');
-        if (frame === this.frame) {
-          this.root.classList.add('has-preview');
-          this.draw();
-        }
-        resolve(image);
-      };
-      image.onerror = () => {
-        this.inFlight.delete(key);
-        if (token !== this.loadToken) return reject(new Error('LOAD_CANCELLED'));
-        if (retry) {
-          setTimeout(() => this.loadFrame(frame, token, false).then(resolve, reject), 180);
-          return;
-        }
+    const loaded = () => {
+      if (this.inFlight.get(key) !== image) return;
+      const frame = this.frame;
+      const buffering = this.buffering;
+      this.inFlight.delete(key);
+      image.onload = image.onerror = null;
+      this.images.set(key, image);
+      this.retried.delete(key);
+      if (!this.ready) this.showFirstImage(key);
+      else this.updateDisplayedFrame();
+      this.preload();
+      if (frame && (frame !== this.frame || buffering !== this.buffering)) this.emit('progress');
+    };
+    const failed = () => {
+      if (this.inFlight.get(key) !== image) return;
+      this.cancelFrame(key);
+      if (this.retried.delete(key)) {
         this.failed.add(key);
-        this.emit('frameerror', { frame });
-        reject(new Error(`FRAME_LOAD_FAILED:${frame.originalFilename}`));
-      };
-      image.src = frame.previewUrl;
-    });
-    this.inFlight.set(key, { image, promise });
-    return promise;
+        const requested = key === frameSource(this.requestedFrame);
+        this.emit('frameerror', { requested, failedSource: key });
+      } else this.retried.add(key);
+      this.preload();
+      this.emit('progress');
+    };
+    image.onload = () => {
+      if (image.decode) image.decode().then(loaded, failed);
+      else loaded();
+    };
+    image.onerror = failed;
+    this.inFlight.set(key, image);
+    image.src = key;
+  }
+
+  showFirstImage(key) {
+    this.angleIndex = this.product.angles.findIndex((angle) => angle.frames.some((frame) => frameSource(frame) === key));
+    this.frameIndex = this.angle.frames.findIndex((frame) => frameSource(frame) === key);
+    if (this.frameFailed) {
+      this.requestedAngleIndex = this.angleIndex;
+      this.renderPosition = this.frameIndex;
+    }
+    this.ready = true;
+    this.painted = { current: key, progress: 0 };
+    this.root.classList.add('ready');
+    this.draw();
+    this.finishLoading('ready');
+  }
+
+  trimImages(wanted) {
+    for (const [key, image] of this.images) {
+      if (this.images.size <= this.maxImages) return;
+      if (wanted.has(key) || key === this.painted?.current || key === this.painted?.next) continue;
+      this.releaseImage(image);
+      this.images.delete(key);
+    }
   }
 
   resize() {
@@ -249,11 +333,8 @@ export class SequenceViewer extends EventTarget {
     const width = this.canvas.clientWidth;
     const height = this.canvas.clientHeight;
     this.context.clearRect(0, 0, width, height);
-    if (!this.angle?.frames.length) return;
-    const blend = this.blendState();
-    const currentImage = this.images.get(this.frameKey(this.angle.frames[blend.current]));
-    if (!currentImage) return;
-    const drawImage = (image, alpha = 1) => {
+    if (!this.painted) return;
+    const drawImage = (image, alpha) => {
       const fit = Math.min(width / image.naturalWidth, height / image.naturalHeight);
       const drawWidth = image.naturalWidth * fit * this.scale;
       const drawHeight = image.naturalHeight * fit * this.scale;
@@ -261,30 +342,72 @@ export class SequenceViewer extends EventTarget {
       this.context.drawImage(image, (width - drawWidth) / 2 + this.offsetX,
         (height - drawHeight) / 2 + this.offsetY, drawWidth, drawHeight);
     };
-    if (this.reducedMotion.matches) {
-      const displayImage = this.images.get(this.frameKey(this.angle.frames[blend.display]));
-      if (displayImage) drawImage(displayImage, 1);
-      this.context.globalAlpha = 1;
-      return;
-    }
-    const progress = blend.progress;
-    drawImage(currentImage, 1);
-    if (progress > .001 && blend.next !== blend.current) {
-      const nextImage = this.images.get(this.frameKey(this.angle.frames[blend.next]));
-      if (nextImage) drawImage(nextImage, progress);
+    const { current, next, progress } = this.painted;
+    drawImage(this.images.get(current), 1 - progress);
+    if (next) {
+      this.context.globalCompositeOperation = 'lighter';
+      drawImage(this.images.get(next), progress);
+      this.context.globalCompositeOperation = 'source-over';
     }
     this.context.globalAlpha = 1;
   }
 
-  setRenderPosition(position, { emit = true, loop = this.loop } = {}) {
-    if (!this.ready || !this.angle?.frames.length) return;
-    const length = this.angle.frames.length;
-    const blend = blendFrameState(position, length, loop);
-    const previousFrameIndex = this.frameIndex;
-    this.renderPosition = blend.position;
-    this.frameIndex = blend.display;
+  imageSource(frame) {
+    const detail = detailSource(frame);
+    return this.images.has(detail) ? detail : frameSource(frame);
+  }
+
+  nearbyDragFrame(target, frames) {
+    const visibleDistance = this.angleIndex === this.requestedAngleIndex
+      ? Math.min(manualFrameIndex(target - this.frameIndex, frames.length),
+        manualFrameIndex(this.frameIndex - target, frames.length))
+      : frames.length;
+    const maxLag = Math.min(MAX_DRAG_LAG, visibleDistance - 1, Math.floor(frames.length / 2));
+    for (let lag = 1; lag <= maxLag; lag++) {
+      const index = manualFrameIndex(target - lag * this.requestDirection, frames.length);
+      if (this.images.has(this.imageSource(frames[index]))) return index;
+    }
+    return -1;
+  }
+
+  updateDisplayedFrame() {
+    const blend = this.blendState();
+    const frames = this.requestedAngle.frames;
+    let index = blend.display;
+    let key = this.imageSource(frames[index]);
+    if (!this.images.has(key)) {
+      if (!this.dragging) return;
+      index = this.nearbyDragFrame(index, frames);
+      if (index === -1) return;
+      key = this.imageSource(frames[index]);
+    }
+    const current = this.imageSource(frames[blend.current]);
+    const next = this.imageSource(frames[blend.next]);
+    const canBlend = index === blend.display && !this.reducedMotion.matches && blend.progress > .001
+      && this.images.has(current) && this.images.has(next);
+    this.angleIndex = this.requestedAngleIndex;
+    this.frameIndex = index;
+    const painted = canBlend ? { current, next, progress: blend.progress } : { current: key, progress: 0 };
+    if (painted.current === this.painted?.current && painted.next === this.painted?.next
+      && painted.progress === this.painted?.progress) return;
+    this.painted = painted;
     this.draw();
-    if (emit && previousFrameIndex !== this.frameIndex) this.emit('change');
+  }
+
+  setRenderPosition(position, { emit = true, loop = !this.playing, dragDirection = 0 } = {}) {
+    if (!this.ready || !this.requestedAngle?.frames.length) return;
+    const frame = this.frame;
+    const buffering = this.buffering;
+    const frameFailed = this.frameFailed;
+    const length = this.requestedAngle.frames.length;
+    const blend = blendFrameState(position, length, loop);
+    let delta = blend.position - this.renderPosition;
+    if (loop && Math.abs(delta) > length / 2) delta -= Math.sign(delta) * length;
+    if (delta && !this.playing) this.requestDirection = dragDirection || Math.sign(delta);
+    this.renderPosition = blend.position;
+    this.updateDisplayedFrame();
+    this.preload();
+    if (emit && (frame !== this.frame || buffering !== this.buffering || frameFailed !== this.frameFailed)) this.emit('change');
   }
 
   scheduleRenderPosition(position) {
@@ -294,58 +417,48 @@ export class SequenceViewer extends EventTarget {
       this.renderFrame = 0;
       const next = this.pendingRenderPosition;
       this.pendingRenderPosition = null;
-      this.setRenderPosition(next);
+      const dragDirection = Math.sign(next - this.gesture.lastPosition);
+      this.gesture.lastPosition = next;
+      this.setRenderPosition(next, { dragDirection });
     });
   }
 
   snapRenderPosition(shouldEmit = true) {
-    const pending = this.pendingRenderPosition;
-    if (pending !== null) {
-      this.pendingRenderPosition = null;
-      cancelAnimationFrame(this.renderFrame);
-      this.renderFrame = 0;
-      this.setRenderPosition(pending, { emit: false });
-    }
-    this.setRenderPosition(Math.round(this.renderPosition), { emit: shouldEmit });
+    const position = this.pendingRenderPosition ?? this.renderPosition;
+    this.pendingRenderPosition = null;
+    cancelAnimationFrame(this.renderFrame);
+    this.renderFrame = 0;
+    this.setRenderPosition(Math.round(position), { emit: shouldEmit });
   }
 
-  showFrame(index, { playback = false } = {}) {
-    if (!this.ready || !this.angle?.frames.length) return;
-    const next = playback ? clamp(index, 0, this.angle.frames.length - 1) : manualFrameIndex(index, this.angle.frames.length, this.loop);
-    this.setRenderPosition(next, { loop: playback ? false : this.loop });
-    if (!playback) this.playbackComplete = false;
+  showFrame(index) {
+    if (!this.ready) return;
+    this.playbackComplete = false;
+    this.setRenderPosition(index);
   }
 
   showAngle(index) {
     if (!this.ready) return;
     const next = clamp(index, 0, this.product.angles.length - 1);
-    if (next === this.angleIndex) return;
+    if (next === this.requestedAngleIndex) return;
     this.stop();
-    const previousFrame = this.frame?.index;
-    this.angleIndex = next;
-    const exact = this.angle.frames.findIndex((frame) => frame.index === previousFrame);
-    this.frameIndex = exact >= 0 ? exact : clamp(this.frameIndex, 0, this.angle.frames.length - 1);
-    this.renderPosition = this.frameIndex;
+    const previousFrame = this.requestedFrame?.index;
+    this.requestedAngleIndex = next;
+    const exact = this.requestedAngle.frames.findIndex((frame) => frame.index === previousFrame);
+    const position = exact >= 0 ? exact : clamp(this.renderPosition, 0, this.requestedAngle.frames.length - 1);
     this.playbackComplete = false;
-    this.draw();
+    this.setRenderPosition(position, { emit: false });
     this.emit('change');
   }
 
-  reset(shouldEmit = true) {
+  reset() {
     this.stop();
     this.scale = 1;
     this.offsetX = 0;
     this.offsetY = 0;
     this.playbackComplete = false;
-    this.renderPosition = this.frameIndex;
     this.draw();
-    if (shouldEmit) this.emit('change');
-  }
-
-  setLoop(loop) {
-    this.loop = Boolean(loop);
-    if (this.loop) this.playbackComplete = false;
-    this.emit('loopchange');
+    this.emit('change');
   }
 
   setReverse(reverse) {
@@ -354,43 +467,62 @@ export class SequenceViewer extends EventTarget {
   }
 
   setPlaying(playing) {
-    if (!this.product || !this.ready || this.failed.size || this.playing === playing) return;
-    if (playing && this.frameIndex === this.angle.frames.length - 1) {
-      this.frameIndex = 0;
-      this.setRenderPosition(0);
+    if (!this.ready || this.playing === playing) return;
+    if (!playing) {
+      this.stop();
+      return;
     }
-    if (playing) this.playbackComplete = false;
-    this.playing = playing;
-    if (playing) {
-      this.snapRenderPosition(false);
-      this.playStartFrame = this.frameIndex;
-      this.playStartedAt = null;
-      this.playTimer = requestAnimationFrame((timestamp) => this.advancePlayback(timestamp));
-    } else {
-      cancelAnimationFrame(this.playTimer);
-      this.playTimer = 0;
-      this.snapRenderPosition(false);
-    }
+    this.snapRenderPosition(false);
+    this.playbackComplete = false;
+    this.playing = true;
+    this.requestDirection = 1;
+    const last = this.requestedAngle.frames.length - 1;
+    this.playFrame = this.renderPosition === last ? 0 : this.renderPosition;
+    this.setRenderPosition(this.playFrame, { emit: false });
+    this.playTimer = requestAnimationFrame((timestamp) => this.advancePlayback(timestamp));
     this.emit('playchange');
+  }
+
+  nextPlayableFrame() {
+    const frames = this.requestedAngle.frames;
+    let next = this.playFrame + 1;
+    while (next < frames.length && this.failed.has(frameSource(frames[next]))) next++;
+    return next;
   }
 
   advancePlayback(timestamp) {
     if (!this.playing) return;
-    if (this.playStartedAt === null) this.playStartedAt = timestamp;
-    const elapsed = timestamp - this.playStartedAt;
-    const segment = Math.floor(elapsed / 125);
-    const current = this.playStartFrame + segment;
-    const last = this.angle.frames.length - 1;
-    if (current >= last) {
-      this.setRenderPosition(last, { loop: false });
+    const frames = this.requestedAngle.frames;
+    const current = frameSource(frames[this.playFrame]);
+    const last = frames.length - 1;
+    if (this.playFrame === last && (this.images.has(current) || this.failed.has(current))) {
       this.playbackComplete = true;
       this.stop();
       this.emit('playcomplete');
       return;
     }
-    const segmentElapsed = elapsed - segment * 125;
-    const progress = this.reducedMotion.matches ? (segmentElapsed >= 72 ? 1 : 0) : smoothstep(segmentElapsed / 72);
-    this.setRenderPosition(current + progress, { loop: false });
+
+    const next = Math.min(this.nextPlayableFrame(), last);
+    const nextKey = frameSource(frames[next]);
+    if (this.failed.has(current) || (next === last && this.failed.has(nextKey))) {
+      this.playFrame = Math.min(next, last);
+      this.playStartedAt = null;
+      this.setRenderPosition(this.playFrame);
+    } else if (this.images.has(current) && this.images.has(nextKey)) {
+      this.playStartedAt ??= timestamp;
+      const elapsed = timestamp - this.playStartedAt;
+      if (elapsed >= 125) {
+        this.playFrame = next;
+        this.playStartedAt = timestamp;
+        this.setRenderPosition(next);
+      } else if (next === this.playFrame + 1) {
+        const progress = this.reducedMotion.matches ? Number(elapsed >= 72) : smoothstep(elapsed / 72);
+        this.setRenderPosition(this.playFrame + progress);
+      }
+    } else {
+      this.playStartedAt = null;
+      this.setRenderPosition(this.playFrame);
+    }
     this.playTimer = requestAnimationFrame((nextTimestamp) => this.advancePlayback(nextTimestamp));
   }
 
@@ -435,7 +567,8 @@ export class SequenceViewer extends EventTarget {
       this.playbackComplete = false;
       this.canvas.setPointerCapture(event.pointerId);
       this.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
-      this.gesture = { x: event.clientX, y: event.clientY, position: this.renderPosition, angle: this.angleIndex, mode: null };
+      this.gesture = { x: event.clientX, y: event.clientY, position: this.renderPosition, lastPosition: this.renderPosition,
+        angle: this.requestedAngleIndex, mode: null };
     });
     this.canvas.addEventListener('pointermove', (event) => {
       if (!this.pointers.has(event.pointerId) || !this.gesture) return;
@@ -459,7 +592,10 @@ export class SequenceViewer extends EventTarget {
         this.draw();
         return;
       }
-      if (!this.gesture.mode && Math.hypot(dx, dy) > 8) this.gesture.mode = Math.abs(dx) >= Math.abs(dy) ? 'horizontal' : 'vertical';
+      if (!this.gesture.mode && Math.hypot(dx, dy) > 8) {
+        this.gesture.mode = Math.abs(dx) >= Math.abs(dy) ? 'horizontal' : 'vertical';
+        if (this.gesture.mode === 'horizontal') this.gesture.sources = new Set(this.requestedAngle.frames.map(frameSource));
+      }
       if (this.gesture.mode === 'horizontal') {
         this.playbackComplete = false;
         this.scheduleRenderPosition(horizontalDragFrame(this.gesture.position, dx, this.reverse));
@@ -469,8 +605,9 @@ export class SequenceViewer extends EventTarget {
     const end = (event) => {
       this.pointers.delete(event.pointerId);
       if (!this.pointers.size) {
-        if (this.gesture?.mode === 'horizontal') this.snapRenderPosition();
+        const horizontal = this.gesture?.mode === 'horizontal';
         this.gesture = null;
+        if (horizontal) this.snapRenderPosition();
       }
     };
     this.canvas.addEventListener('pointerup', end);

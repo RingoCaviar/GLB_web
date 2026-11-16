@@ -1,99 +1,89 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, rm, stat } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import sharp from 'sharp';
-import { buildSequenceProducts, publicSequenceProducts, scanSequenceLibrary } from '../scripts/sequence-cache.mjs';
-import {
-  buildPreloadOrder,
-  blendFrameState,
-  horizontalDragFrame,
-  manualFrameIndex,
-  nextPlaybackFrame,
-  smoothstep,
-} from '../src/sequence-viewer.js';
-
-const productFixture = {
-  angles: [
-    { angle: 5, frames: Array.from({ length: 8 }, (_, index) => ({ previewUrl: `5-${index}` })) },
-    { angle: 10, frames: Array.from({ length: 3 }, (_, index) => ({ previewUrl: `10-${index}` })) },
-  ],
-};
-const preloadOrder = buildPreloadOrder(productFixture);
-assert.equal(preloadOrder.length, 11);
-assert.deepEqual(preloadOrder.slice(0, 7).map((frame) => frame.previewUrl),
-  ['5-0', '5-1', '5-7', '5-2', '5-6', '5-3', '5-5']);
-assert.deepEqual(nextPlaybackFrame(2, 4), { index: 3, complete: false });
-assert.deepEqual(nextPlaybackFrame(3, 4), { index: 3, complete: true });
-assert.equal(manualFrameIndex(-1, 4, false), 0);
-assert.equal(manualFrameIndex(4, 4, false), 3);
-assert.equal(manualFrameIndex(-1, 4, true), 3);
-assert.equal(manualFrameIndex(4, 4, true), 0);
-assert.equal(horizontalDragFrame(10, 36, false), 8);
-assert.equal(horizontalDragFrame(10, -36, false), 12);
-assert.equal(horizontalDragFrame(10, 36, true), 12);
-assert.equal(horizontalDragFrame(10, -36, true), 8);
-assert.deepEqual(blendFrameState(2.25, 4, false), {
-  position: 2.25, current: 2, next: 3, progress: .25, display: 2,
-});
-assert.deepEqual(blendFrameState(2.75, 4, false), {
-  position: 2.75, current: 2, next: 3, progress: .75, display: 3,
-});
-assert.deepEqual(blendFrameState(3.5, 4, false), {
-  position: 3, current: 3, next: 3, progress: 0, display: 3,
-});
-assert.deepEqual(blendFrameState(3.5, 4, true), {
-  position: 3.5, current: 3, next: 0, progress: .5, display: 0,
-});
-assert.equal(smoothstep(0), 0);
-assert.equal(smoothstep(.5), .5);
-assert.equal(smoothstep(1), 1);
+import { withSequenceServer } from './sequence-test-server.mjs';
+import { checkSequenceViewer } from './sequence-viewer.mjs';
 
 const root = await mkdtemp(join(tmpdir(), 'glb-sequence-'));
 try {
-  const product = join(root, 'image_sequence', '测试产品');
-  const source = join(product, '测试产品_俯角5_0001.png');
+  const sourceRoot = join(root, 'image_sequence');
+  const product = join(sourceRoot, '系列', '测试产品');
+  const filename = '测试产品_俯角5_0001.png';
+  const source = join(product, filename);
+  const original = await sharp({
+    create: { width: 2400, height: 1200, channels: 4, background: '#7bd7a280' },
+  }).png().toBuffer();
   await mkdir(product, { recursive: true });
-  await sharp({
-    create: { width: 40, height: 30, channels: 4, background: '#7bd7a2' },
-  }).png().toFile(source);
+  await writeFile(source, original);
 
-  let library = publicSequenceProducts(await scanSequenceLibrary(root));
-  assert.equal(library.length, 1);
-  assert.equal(library[0].cacheStatus, 'missing');
-  assert.deepEqual(library[0].resolutions, [{ width: 40, height: 30 }]);
+  await withSequenceServer(root, async (request) => {
+    async function library() {
+      const response = await request('/__sequence/library');
+      assert.equal(response.status, 200);
+      const data = await response.json();
+      assert.deepEqual(data.warnings, []);
+      return data.products;
+    }
 
-  const progress = [];
-  const first = await buildSequenceProducts(root, ['测试产品'], 512, (value) => progress.push(value.completed));
-  assert.deepEqual({ total: first.total, succeeded: first.succeeded, failed: first.failed }, { total: 1, succeeded: 1, failed: 0 });
-  assert.deepEqual(progress, [0, 1]);
-  const preview = join(root, 'image_sequence', '.generated', '测试产品', '测试产品_俯角5_0001.webp');
-  const metadata = await sharp(await readFile(preview)).metadata();
-  assert.equal(metadata.format, 'webp');
-  assert.equal(metadata.width, 40);
-  assert.equal(metadata.height, 30);
+    const [item] = await library();
+    assert.equal(item.id, '系列/测试产品');
+    assert.equal(item.totalFrames, 1);
+    assert.deepEqual(item.resolutions, [{ width: 2400, height: 1200 }]);
+    const [frame] = item.angles[0].frames;
+    assert.equal(frame.originalFilename, filename);
+    assert.match(frame.previewUrl, /^\/__sequence\/file\?/);
+    const dragParams = new URL(frame.dragUrl, 'http://localhost').searchParams;
+    assert.equal(dragParams.get('kind'), 'drag');
+    assert.equal(dragParams.get('v'), new URL(frame.previewUrl, 'http://localhost').searchParams.get('v'));
 
-  library = publicSequenceProducts(await scanSequenceLibrary(root));
-  assert.equal(library[0].cacheStatus, 'ready');
-  assert.equal(library[0].maxSize, 512);
-  assert.match(library[0].thumbnailUrl, /^\/__sequence\/file/);
+    for (const [url, width, height] of [
+      [item.thumbnailUrl, 320, 160], [frame.dragUrl, 640, 320], [frame.previewUrl, 1600, 800],
+    ]) {
+      const response = await request(url);
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get('content-type'), 'image/webp');
+      assert.match(response.headers.get('cache-control'), /\bno-store\b/);
+      const metadata = await sharp(Buffer.from(await response.arrayBuffer())).metadata();
+      assert.equal(metadata.width, width);
+      assert.equal(metadata.height, height);
+      assert.equal(metadata.hasAlpha, true);
+    }
+    const download = await request(frame.originalUrl);
+    assert.equal(download.status, 200);
+    assert.equal(download.headers.get('content-type'), 'image/png');
+    assert.deepEqual(Buffer.from(await download.arrayBuffer()), original);
+    assert.deepEqual(await readdir(sourceRoot), ['系列']);
+    assert.deepEqual(await readdir(product), [filename]);
+    assert.equal((await request('/__sequence/job', { method: 'POST' })).status, 404);
 
-  const before = (await stat(preview)).mtimeMs;
-  await new Promise((resolve) => setTimeout(resolve, 20));
-  await buildSequenceProducts(root, ['测试产品'], 1600);
-  assert.ok((await stat(preview)).mtimeMs >= before);
-  library = publicSequenceProducts(await scanSequenceLibrary(root));
-  assert.equal(library[0].maxSize, 1600);
+    const staging = join(sourceRoot, '.generated', '.blender-orbit-test');
+    await mkdir(staging, { recursive: true });
+    const stagedFrame = join(staging, filename);
+    const legacy = join(sourceRoot, '.generated', 'old.webp');
+    await writeFile(stagedFrame, original);
+    await writeFile(legacy, 'existing local cache');
+    await sharp({ create: { width: 24, height: 18, channels: 4, background: '#ffcc55' } }).png().toFile(source);
+    const [updated] = await library();
+    assert.deepEqual(updated.resolutions, [{ width: 24, height: 18 }]);
+    const nextFrame = updated.angles[0].frames[0];
+    assert.notEqual(nextFrame.previewUrl, frame.previewUrl);
+    assert.equal(nextFrame.dragUrl, undefined);
+    const newImage = await request(nextFrame.previewUrl);
+    assert.equal(newImage.status, 200);
+    const updatedMeta = await sharp(Buffer.from(await newImage.arrayBuffer())).metadata();
+    assert.deepEqual([updatedMeta.width, updatedMeta.height], [24, 18]);
 
-  await sharp({ create: { width: 24, height: 18, channels: 4, background: '#ffcc55' } }).png().toFile(source);
-  library = publicSequenceProducts(await scanSequenceLibrary(root));
-  assert.equal(library[0].cacheStatus, 'ready');
-  assert.match(library[0].thumbnailUrl, /^\/__sequence\/file/);
-
-  await rm(product, { recursive: true, force: true });
-  library = publicSequenceProducts(await scanSequenceLibrary(root));
-  assert.deepEqual(library, []);
-  await assert.rejects(stat(preview), /ENOENT/);
+    const rejected = new URLSearchParams({ kind: 'preview', id: `.generated/.blender-orbit-test/${filename}` });
+    const rejectedResponse = await request(`/__sequence/file?${rejected}`);
+    assert.ok([400, 404].includes(rejectedResponse.status));
+    await rm(product, { recursive: true, force: true });
+    assert.deepEqual(await library(), []);
+    assert.deepEqual(await readFile(stagedFrame), original);
+    assert.equal(await readFile(legacy, 'utf8'), 'existing local cache');
+  });
+  await checkSequenceViewer();
   console.log('sequence preview tests passed');
 } finally {
   sharp.cache(false);

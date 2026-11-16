@@ -20,16 +20,16 @@ try {
   let saves = 0;
   await page.route('**/__thumbnail/save', async (route) => {
     saves++;
-    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ filename: `batch-${saves}.cover.webp`, thumbnailUrl: `/batch-${saves}.webp` }) });
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ filename: `batch-${saves}.cover.webp`, thumbnailUrl: `/batch-${saves}.cover.webp` }) });
   });
   await page.goto(server.resolvedUrls.local[0], { waitUntil: 'networkidle' });
 
-  await page.locator('#sequenceBatchMode').click();
   const cards = page.locator('.recent-grid [data-model-id]');
-  await cards.nth(0).click();
-  await cards.nth(1).click();
-  assert.equal(await page.locator('#sequenceBatchBuild').textContent(), '生成已选 (2)');
-  await page.locator('#sequenceBatchBuild').click();
+  await cards.nth(0).click({ modifiers: ['Shift'] });
+  await cards.nth(1).click({ modifiers: ['Shift'] });
+  await cards.nth(0).dispatchEvent('contextmenu', { clientX: 240, clientY: 320 });
+  assert.equal(await page.locator('#generateThumbnail').textContent(), '为已选 2 个生成缩略图');
+  await page.locator('#generateThumbnail').click();
   assert.equal(await page.locator('#thumbnailBatchTotal').textContent(), '2');
   await page.locator('[name="thumbnailOverwrite"][value="all"]').check();
   await page.locator('#thumbnailBatchStart').click();
