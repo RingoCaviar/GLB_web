@@ -156,7 +156,7 @@ document.querySelector('#app').innerHTML = `
           <div class="frame-outline" aria-hidden="true"></div>
           <div class="frame-label" id="frameLabel">4096 × 4096 · 1:1</div>
           <div class="sequence-toolbar" id="sequenceToolbar" hidden>
-            <button type="button" id="sequencePlay" aria-pressed="false"><span>▶</span> 自动旋转</button>
+            <button type="button" id="sequencePlay" aria-pressed="false"><span>▶</span> 播放旋转</button>
             <i></i>
             <span id="sequenceAngle">俯角 —</span>
             <span id="sequenceFrame">— / —</span>
@@ -264,7 +264,7 @@ document.querySelector('#app').innerHTML = `
         <section class="panel-section">
           <div class="section-heading"><span>02</span><h2>观看控制</h2></div>
           <label class="switch-row">
-            <span><strong>自动旋转</strong><small id="sequencePlaybackStatus">以每秒 8 帧播放一次</small></span>
+            <span><strong>自动旋转</strong><small id="sequencePlaybackStatus">打开产品后以每秒 8 帧播放一次</small></span>
             <input id="sequenceAutoToggle" type="checkbox" role="switch"><i></i>
           </label>
           <label class="switch-row">
@@ -810,19 +810,19 @@ function updateSequenceUI(detail = sequenceViewer.snapshot()) {
   document.querySelector('#sequenceDownload').disabled = !frame || !ready || sequenceDownloading;
   document.querySelector('#sequenceReset').disabled = !ready;
   document.querySelector('#sequencePanelReset').disabled = !ready;
-  document.querySelector('#sequenceAutoToggle').checked = detail.playing;
+  document.querySelector('#sequenceAutoToggle').checked = detail.autoRotate;
   document.querySelector('#sequenceAutoToggle').disabled = !ready;
   document.querySelector('#sequenceReverseToggle').checked = detail.reverse;
   document.querySelector('#sequenceReverseToggle').disabled = !detail.product;
   document.querySelector('#sequencePlaybackStatus').textContent = detail.playbackComplete
     ? '已播放完成'
-    : '以每秒 8 帧播放一次';
+    : '打开产品后以每秒 8 帧播放一次';
   const play = document.querySelector('#sequencePlay');
   play.disabled = !ready;
   play.classList.toggle('active', detail.playing);
   play.setAttribute('aria-pressed', String(detail.playing));
   play.innerHTML = detail.playing ? '<span>Ⅱ</span> 暂停旋转' : detail.playbackComplete
-    ? '<span>↻</span> 重新播放' : '<span>▶</span> 自动旋转';
+    ? '<span>↻</span> 重新播放' : '<span>▶</span> 播放旋转';
 }
 
 async function downloadSequenceFrame() {
@@ -1778,7 +1778,7 @@ sequenceViewer.addEventListener('viewererror', (event) => {
   if (state.mode === 'sequence') setStatus('没有可用图片', 'error');
 });
 document.querySelector('#sequencePlay').addEventListener('click', () => sequenceViewer.setPlaying(!sequenceViewer.playing));
-document.querySelector('#sequenceAutoToggle').addEventListener('change', (event) => sequenceViewer.setPlaying(event.target.checked));
+document.querySelector('#sequenceAutoToggle').addEventListener('change', (event) => sequenceViewer.setAutoRotate(event.target.checked));
 document.querySelector('#sequenceReverseToggle').addEventListener('change', (event) => sequenceViewer.setReverse(event.target.checked));
 document.querySelector('#sequenceRetry').addEventListener('click', () => {
   setStatus(`正在重试 ${state.selectedSequence?.name || '产品'}`);

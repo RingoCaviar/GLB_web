@@ -108,6 +108,58 @@ function makeHarness() {
   };
 }
 
+async function checkViewerPreferences() {
+  const harness = makeHarness();
+  const values = new Map();
+  const storage = {
+    getItem: (key) => values.get(key) ?? null,
+    setItem: (key, value) => values.set(key, value),
+  };
+  const product = fixture('preferences', 4);
+  let viewer = new SequenceViewer(harness.root, { storage });
+  async function loadProduct() {
+    const load = viewer.load(product);
+    assert.equal(viewer.snapshot().playing, false, 'Playback should wait for the first visible frame');
+    await harness.respond('preferences/0/1.webp');
+    await load;
+    await harness.finishNearby();
+  }
+  try {
+    assert.equal(viewer.snapshot().reverse, false);
+    assert.equal(viewer.snapshot().autoRotate, false);
+    await loadProduct();
+    assert.equal(viewer.snapshot().playing, false);
+    viewer.setReverse(true);
+    viewer.setAutoRotate(true);
+    assert.equal(viewer.snapshot().playing, true);
+    viewer.setPlaying(false);
+    assert.equal(viewer.snapshot().autoRotate, true, 'Pausing playback should preserve the auto-rotation preference');
+
+    viewer.unload();
+    viewer = new SequenceViewer(harness.root, { storage });
+    assert.equal(viewer.snapshot().reverse, true);
+    assert.equal(viewer.snapshot().autoRotate, true);
+    await loadProduct();
+    assert.equal(viewer.snapshot().playing, true, 'The saved preference should start playback after reload');
+    for (let timestamp = 0; timestamp <= 625; timestamp += 125) harness.tick(timestamp);
+    assert.equal(viewer.snapshot().playing, false);
+    assert.equal(viewer.snapshot().playbackComplete, true);
+    assert.equal(viewer.snapshot().autoRotate, true, 'Completing playback should preserve the auto-rotation preference');
+
+    viewer.setAutoRotate(false);
+    viewer.setReverse(false);
+    viewer.unload();
+    viewer = new SequenceViewer(harness.root, { storage });
+    await loadProduct();
+    assert.equal(viewer.snapshot().reverse, false);
+    assert.equal(viewer.snapshot().autoRotate, false);
+    assert.equal(viewer.snapshot().playing, false);
+  } finally {
+    viewer.unload();
+    harness.restore();
+  }
+}
+
 async function checkWholeRing() {
   const harness = makeHarness();
   const { root, requested, pending, painted } = harness;
@@ -131,18 +183,18 @@ async function checkWholeRing() {
 
     const requestCount = requested.length;
     harness.pointer('pointerdown');
-    harness.pointer('pointermove', -18);
+    harness.pointer('pointermove', 18);
     harness.tick();
     assert.deepEqual(painted, ['ring/0/36-small.webp'], 'A warm drag should immediately wrap to the last frame');
-    harness.pointer('pointermove', 18);
+    harness.pointer('pointermove', -18);
     harness.tick();
     assert.deepEqual(painted, ['ring/0/1-small.webp'], 'Reversing into a sharp still should use the lightweight frame');
     for (let frame = 2; frame <= 36; frame++) {
-      harness.pointer('pointermove', 18);
+      harness.pointer('pointermove', -18);
       harness.tick();
       assert.deepEqual(painted, [`ring/0/${frame}-small.webp`], 'Every frame of the warm ring should be immediately visible');
     }
-    harness.pointer('pointermove', 288);
+    harness.pointer('pointermove', -288);
     harness.tick();
     assert.deepEqual(painted, ['ring/0/16-small.webp'], 'A distant frame should be immediately available in memory');
     assert.equal(requested.length, requestCount, 'A warm drag should make no image requests');
@@ -157,7 +209,7 @@ async function checkWholeRing() {
     await harness.respond('ring/1/16-small.webp');
     await harness.respond('ring/1/17-small.webp');
     harness.pointer('pointerdown');
-    harness.pointer('pointermove', 18);
+    harness.pointer('pointermove', -18);
     harness.tick();
     assert.deepEqual(painted, ['ring/1/17-small.webp']);
     const requestsBeforeRelease = requested.length;
@@ -206,6 +258,7 @@ export async function checkSequenceViewer() {
   const { root, requested, pending, painted } = harness;
   const viewer = new SequenceViewer(root, { concurrency: 3, maxImages: 8 });
   try {
+    viewer.setReverse(true);
     const product = fixture('first', 120, 3);
     let loadFinished = false;
     viewer.load(product).then(() => { loadFinished = true; });
@@ -311,4 +364,5 @@ export async function checkSequenceViewer() {
     harness.restore();
   }
   await checkWholeRing();
+  await checkViewerPreferences();
 }

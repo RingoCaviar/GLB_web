@@ -5,6 +5,20 @@ const MAX_DRAG_LAG = 8;
 const DRAG_PREVIEW_EDGE = 640;
 const MAX_RING_BYTES = 96 * 1024 ** 2;
 
+function loadSequencePreference(name, storage) {
+  try {
+    return (storage ?? globalThis.localStorage)?.getItem(`glb-viewer:sequence-${name}:v1`) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+function saveSequencePreference(name, value, storage) {
+  try {
+    (storage ?? globalThis.localStorage)?.setItem(`glb-viewer:sequence-${name}:v1`, String(value));
+  } catch { /* optional persistence */ }
+}
+
 function dragFrameBytes(frame) {
   const { width, height } = frame;
   const hasDimensions = width > 0 && height > 0;
@@ -58,7 +72,7 @@ export function smoothstep(value) {
 }
 
 export class SequenceViewer extends EventTarget {
-  constructor(root, { concurrency = 4, maxImages } = {}) {
+  constructor(root, { concurrency = 4, maxImages, storage } = {}) {
     super();
     this.root = root;
     this.canvas = root.querySelector('canvas');
@@ -86,7 +100,9 @@ export class SequenceViewer extends EventTarget {
     this.loading = false;
     this.ready = false;
     this.playing = false;
-    this.reverse = true;
+    this.storage = storage;
+    this.autoRotate = loadSequencePreference('auto-rotate', storage);
+    this.reverse = loadSequencePreference('reverse', storage);
     this.requestDirection = 1;
     this.playbackComplete = false;
     this.playTimer = 0;
@@ -143,6 +159,7 @@ export class SequenceViewer extends EventTarget {
       loading: this.loading,
       ready: this.ready,
       playing: this.playing,
+      autoRotate: this.autoRotate,
       reverse: this.reverse,
       playbackComplete: this.playbackComplete,
     };
@@ -343,6 +360,7 @@ export class SequenceViewer extends EventTarget {
     this.root.classList.add('ready');
     this.draw();
     this.finishLoading('ready');
+    if (this.autoRotate) this.setPlaying(true);
   }
 
   trimImages(wanted, discardUnwanted = this.preloadWholeRing) {
@@ -501,7 +519,15 @@ export class SequenceViewer extends EventTarget {
 
   setReverse(reverse) {
     this.reverse = Boolean(reverse);
+    saveSequencePreference('reverse', this.reverse, this.storage);
     this.emit('reversechange');
+  }
+
+  setAutoRotate(enabled) {
+    this.autoRotate = Boolean(enabled);
+    saveSequencePreference('auto-rotate', this.autoRotate, this.storage);
+    if (this.ready && this.playing !== this.autoRotate) this.setPlaying(this.autoRotate);
+    else this.emit('change');
   }
 
   setPlaying(playing) {
