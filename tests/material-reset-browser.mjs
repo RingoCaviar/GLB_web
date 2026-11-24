@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { createServer as createTcpServer } from 'node:net';
 import { chromium } from 'playwright-core';
 import { createServer } from 'vite';
 
@@ -13,8 +14,16 @@ const browserCandidates = process.platform === 'win32'
 const executablePath = browserCandidates.find((candidate) => fs.existsSync(candidate));
 assert.ok(executablePath, '材质重置回归需要本机 Chrome、Edge 或 Chromium');
 
+const port = await new Promise((resolve, reject) => {
+  const listener = createTcpServer();
+  listener.once('error', reject);
+  listener.listen(0, '127.0.0.1', () => {
+    const { port } = listener.address();
+    listener.close(() => resolve(port));
+  });
+});
 const server = await createServer({
-  server: { host: '127.0.0.1', port: 0, watch: { ignored: ['**/src/environment-presets.generated.js'] } },
+  server: { host: '127.0.0.1', port, strictPort: true, watch: { ignored: ['**/src/environment-presets.generated.js'] } },
 });
 await server.listen();
 let browser;
@@ -24,6 +33,7 @@ try {
   await page.goto(server.resolvedUrls.local[0], { waitUntil: 'networkidle' });
   await page.locator('[data-model-id]').first().click();
   await page.waitForFunction(() => document.querySelector('#modelStatus')?.classList.contains('ready'), null, { timeout: 60000 });
+  await page.locator('#settings-toggle-material').click();
 
   const number = page.locator('[data-number="materialMetallic"]');
   const range = page.locator('#materialMetallic');

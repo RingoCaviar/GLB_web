@@ -1,10 +1,29 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { createServer as createTcpServer } from 'node:net';
 import { chromium } from 'playwright-core';
 import sharp from 'sharp';
 import { createServer } from 'vite';
 
-const modelId = '胰岛素注射器包装盒/注射器包装盒_002.glb';
+const folder = '胰岛素注射器包装盒';
+const modelId = `${folder}/${folder}_002.glb`;
+const longName = '加长型号名称_ProfessionalPackagingEditionWithExtendedSpecifications2026';
+
+async function assertLongNameFits(locator, container = locator) {
+  const original = await locator.textContent();
+  await locator.evaluate((element, name) => { element.textContent = name; }, longName);
+  try {
+    const fits = await locator.evaluate((element) => (
+      element.scrollWidth <= element.clientWidth && element.scrollHeight <= element.clientHeight
+    ));
+    const containerFits = await container.evaluate((element) => (
+      element.scrollWidth <= element.clientWidth && element.scrollHeight <= element.clientHeight
+    ));
+    assert.ok(fits && containerFits, `${locator} 应完整显示长名称`);
+  } finally {
+    await locator.evaluate((element, name) => { element.textContent = name; }, original);
+  }
+}
 const browserCandidates = process.platform === 'win32'
   ? [
       'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
@@ -15,7 +34,15 @@ const browserCandidates = process.platform === 'win32'
 const executablePath = browserCandidates.find((candidate) => fs.existsSync(candidate));
 assert.ok(executablePath, '外观变体回归需要本机 Chrome、Edge 或 Chromium');
 
-const server = await createServer({ server: { host: '127.0.0.1', port: 0, watch: { ignored: ['**/src/environment-presets.generated.js'] } } });
+const port = await new Promise((resolve, reject) => {
+  const listener = createTcpServer();
+  listener.once('error', reject);
+  listener.listen(0, '127.0.0.1', () => {
+    const { port } = listener.address();
+    listener.close(() => resolve(port));
+  });
+});
+const server = await createServer({ server: { host: '127.0.0.1', port, strictPort: true, watch: { ignored: ['**/src/environment-presets.generated.js'] } } });
 await server.listen();
 let browser;
 try {
@@ -38,8 +65,17 @@ try {
   });
 
   await page.goto(server.resolvedUrls.local[0], { waitUntil: 'networkidle' });
+  const folderCard = page.locator(`[data-thumbnail-folder="${folder}"]`);
+  const recentCard = page.locator('.recent-grid .model-card').first();
+  await assertLongNameFits(recentCard.locator('strong'), recentCard);
+  await assertLongNameFits(folderCard.locator('strong'), folderCard);
+  await folderCard.click();
   const modelCard = page.locator(`[data-model-id="${modelId}"]`);
-  assert.equal(await modelCard.count(), 1, '模型库应显示带外观变体的测试模型');
+  for (const width of [390, 1280]) {
+    await page.setViewportSize({ width, height: 900 });
+    await assertLongNameFits(modelCard.locator('strong'), modelCard);
+    await assertLongNameFits(modelCard.locator('small'), modelCard);
+  }
   await modelCard.click();
   await page.waitForFunction(() => {
     const status = document.querySelector('#modelStatus')?.textContent?.trim() ?? '';
@@ -48,11 +84,33 @@ try {
 
   assert.match(await page.locator('#modelStatus').getAttribute('class'), /\bready\b/, '带外观变体的模型应进入可交互状态');
   assert.equal(await page.locator('#exportButton').isEnabled(), true, '带外观变体的模型应允许导出');
+  await page.locator('#settings-toggle-material').click();
   assert.equal(await page.locator('#appearanceVariants').isVisible(), true, '网页应显示外观变体选择器');
+  const materialName = page.locator('.material-full-name');
+  const materialPicker = page.locator('#materialSelect');
+  assert.equal(await materialName.textContent(), await materialPicker.locator('option:checked').textContent());
+  await page.locator('#materialTextureChannels > summary').click();
+  await page.locator('.texture-name').first().waitFor({ state: 'visible' });
+  for (const width of [390, 1280]) {
+    await page.setViewportSize({ width, height: 900 });
+    await assertLongNameFits(page.locator('#appearanceVariantName'), page.locator('#appearanceVariantToggle'));
+    await assertLongNameFits(materialName);
+    await assertLongNameFits(page.locator('.texture-name').first(), page.locator('.texture-card').first());
 
-  await page.locator('#appearanceVariantToggle').click();
-  const labels = await page.locator('[data-appearance-variant] strong').allInnerTexts();
-  assert.deepEqual(labels, ['原始外观', '0.5ML', '1ML', '0.3ML']);
+    await page.locator('#appearanceVariantToggle').click();
+    const labels = await page.locator('[data-appearance-variant] strong').allInnerTexts();
+    assert.deepEqual(labels, ['原始外观', '0.5ML', '1ML', '0.3ML']);
+    const selectedOption = page.locator('[data-appearance-variant][aria-selected="true"]');
+    await assertLongNameFits(selectedOption.locator('strong'), selectedOption);
+    await page.locator('#appearanceVariantToggle').click();
+  }
+
+  await page.locator('#settings-toggle-lighting').click();
+  await assertLongNameFits(page.locator('#environmentCurrent strong'), page.locator('#environmentPickerToggle'));
+  await page.locator('#environmentPickerToggle').click();
+  const environmentCard = page.locator('.environment-card').first();
+  await assertLongNameFits(environmentCard.locator(':scope > span:nth-child(2)'), environmentCard);
+  await page.locator('#environmentDialogClose').click();
 
   const generateCover = async (value) => {
     await page.locator('#openLibrary').click();
@@ -63,7 +121,9 @@ try {
       await page.locator('[data-thumbnail-variant] strong').allInnerTexts(),
       ['原始外观', '0.5ML', '1ML', '0.3ML'],
     );
-    await page.locator(`[data-thumbnail-variant="${value}"]`).click();
+    const coverOption = page.locator(`[data-thumbnail-variant="${value}"]`);
+    await assertLongNameFits(coverOption.locator('strong'), coverOption);
+    await coverOption.click();
     const saved = page.waitForResponse((response) => response.url().includes('/__thumbnail/save'));
     await page.locator('#thumbnailVariantConfirm').click();
     await saved;

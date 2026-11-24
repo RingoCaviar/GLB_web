@@ -1,5 +1,9 @@
 import '@google/model-viewer';
+import '@google/model-viewer-effects';
 import './style.css';
+import './export-panel.css';
+import './render-studio-panel.css';
+import './sequence-background.css';
 import { folderThumbnailUrl, libraryEntries, models, parentFolder, recentModels } from './model-library.js';
 import { filterLibraryItems } from './library-search.js';
 import { modelsInFolder, runThumbnailBatch } from './model-thumbnail-batch.js';
@@ -35,6 +39,7 @@ import {
   refreshSequenceLibrary,
 } from './sequence-library.js';
 import { SequenceViewer } from './sequence-viewer.js';
+import { SequenceBackground, sequenceBackgroundPanel, sequenceGradientOverlay } from './sequence-background.js';
 import { finalizePngExport } from './png-export.js';
 import {
   ExportQualityMode,
@@ -43,7 +48,7 @@ import { ExportOptions } from './export-options.js';
 import { hasRenderRestorationFailure, renderFixedSizeImage } from './fixed-size-render.js';
 import { ModelLoadingModule } from './model-loading.js';
 import { ModelViewerLoadingAdapter } from './model-viewer-loading-adapter.js';
-import { APPEARANCE_ORIGINAL_VALUE, AppearanceVariantSelector, appearanceOptionMeta, appearanceOptions, appearanceVariantTemplate } from './appearance-variants.js';
+import { APPEARANCE_ORIGINAL_VALUE, AppearanceVariantSelector, appearanceOptionMeta, appearanceOptions } from './appearance-variants.js';
 import { readExportDimensionCapability } from './webgl-capabilities.js';
 import { DEFAULT_SHARED_CAMERA_FRAMING, loadSharedCameraFraming, saveSharedCameraFraming } from './shared-camera-framing.js';
 import { applyBuildingCorrection, applyViewerCameraFraming } from './camera-framing-application.js';
@@ -100,24 +105,32 @@ let modelBounds = null;
 let currentMinimumRadius = 0.000001;
 let lastSafeRadius = state.radius;
 
+const settingsCategoryIcons = Object.freeze({
+  camera: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7.5h4l1.4-2h5.2l1.4 2H20v11H4z"/><circle cx="12" cy="13" r="3.2"/><path d="M7.2 10h.01"/></svg>',
+  post: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="7.3"/><path d="M12 4.7v3.1m0 8.4v3.1M4.7 12h3.1m8.4 0h3.1M7 7l2.2 2.2m5.6 5.6L17 17"/></svg>',
+  lighting: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.4"/><path d="M12 2.8v3m0 12.4v3M2.8 12h3m12.4 0h3M5.5 5.5l2.1 2.1m8.8 8.8 2.1 2.1m0-13-2.1 2.1m-8.8 8.8-2.1 2.1"/></svg>',
+  material: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 7.2 4.1v9.8L12 21l-7.2-4.1V7.1z"/><path d="m4.8 7.1 7.2 4.1 7.2-4.1M12 11.2V21"/></svg>',
+});
+const settingsCategoryButton = (id, label) => `<button class="settings-category-button" id="settings-toggle-${id}" type="button" data-settings-toggle="${id}" aria-controls="settings-category-${id}" aria-expanded="${id === 'camera'}">${settingsCategoryIcons[id]}<span>${label}</span></button>`;
+const parameterResetIcon = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4.4 7.2A6 6 0 1 1 4 12.9M4.4 7.2V3.8m0 3.4h3.4"/></svg>';
+
 document.querySelector('#app').innerHTML = `
-  <main class="workspace">
-    <section class="stage" aria-label="三维模型预览区">
+  <main class="workspace" data-preview-mode="model">
+    <section class="stage" aria-label="预览与资源库">
       <header class="stage-header">
-        <div>
-          <span class="eyebrow">LOCAL 3D STUDIO</span>
-          <h1>模型取景台</h1>
-        </div>
+        <h1>模型取景台</h1>
         <div class="stage-actions">
           <div class="mode-switch" role="group" aria-label="预览模式">
-            <button type="button" class="active" data-mode="model">3D 模型</button>
-            <button type="button" data-mode="sequence">360° 图片</button>
+            <button type="button" class="active" data-mode="model" aria-pressed="true">3D 模型</button>
+            <button type="button" data-mode="sequence" aria-pressed="false">360° 图片</button>
           </div>
           <button class="library-button" id="openLibrary" type="button">选择模型</button>
+          <button class="theme-toggle" id="themeToggle" type="button" aria-pressed="false" title="切换明暗主题"><span aria-hidden="true">☼</span><span>浅色</span></button>
           <div class="status-pill" id="modelStatus"><span></span>等待选择模型</div>
         </div>
       </header>
 
+      <p class="message stage-message" id="message" role="status"></p>
       <div class="viewer-shell" id="viewerShell" data-mode="model">
         <div class="viewer-frame" id="viewerFrame">
           <model-viewer
@@ -139,6 +152,11 @@ document.querySelector('#app').innerHTML = `
           interaction-prompt="none"
           interpolation-decay="100"
           >
+            <effect-composer render-mode="quality">
+              <ssao-effect strength="1.5"></ssao-effect>
+              <smaa-effect quality="ultra"></smaa-effect>
+              <color-grade-effect tonemapping="neutral"></color-grade-effect>
+            </effect-composer>
           </model-viewer>
           <div class="sequence-viewer" id="sequenceViewer" hidden>
             <canvas aria-label="360度产品图片预览"></canvas>
@@ -153,21 +171,22 @@ document.querySelector('#app').innerHTML = `
               <button id="sequenceRetryFrame" type="button" hidden>重试</button>
             </div>
           </div>
+          ${sequenceGradientOverlay()}
           <div class="frame-outline" aria-hidden="true"></div>
-          <div class="frame-label" id="frameLabel">4096 × 4096 · 1:1</div>
           <div class="sequence-toolbar" id="sequenceToolbar" hidden>
             <button type="button" id="sequencePlay" aria-pressed="false"><span>▶</span> 播放旋转</button>
             <i></i>
             <span id="sequenceAngle">俯角 —</span>
             <span id="sequenceFrame">— / —</span>
-            <button type="button" id="sequenceReset">重置</button>
+            <button type="button" id="sequenceReset" aria-label="重置观看角度">重置</button>
           </div>
         </div>
+        <div class="frame-label" id="frameLabel">4096 × 4096 · 1:1</div>
         <div class="viewer-error" id="viewerError" hidden>
           <strong>模型载入失败</strong>
           <span id="viewerErrorText">请选择其他模型，或确认模型文件完整。</span>
         </div>
-        <div class="gesture-tip" id="gestureTip">左键旋转 · 滚轮/双指缩放 · 右键平移</div>
+        <div class="gesture-tip sequence-gesture-tip">左右循环旋转 · 上下切换俯角 · 滚轮/双指缩放</div>
         <section class="model-library" id="modelLibrary" aria-label="模型库">
           <div class="library-tools">
             <label class="library-search" for="librarySearch">
@@ -186,99 +205,150 @@ document.querySelector('#app').innerHTML = `
           </div>
         </section>
       </div>
+      <p class="model-gesture-tip" id="gestureTip">
+        <span class="mouse-gesture-copy">左键拖动旋转 · 滚轮缩放 · 右键拖动平移</span>
+        <span class="touch-gesture-copy">单指拖动旋转 · 双指捏合缩放</span>
+      </p>
     </section>
 
-    <aside class="panel" aria-label="模型控制面板">
-      <div id="modelPanel">
-      <section class="panel-section export-section">
-        <div class="section-heading"><span>01</span><h2>导出图片</h2></div>
-        <div class="dimension-grid">
-          <label>宽度 <span><input id="exportWidth" type="number" min="64" max="8192" value="4096"><em>px</em><button class="parameter-reset" id="resetExportWidth" type="button" aria-label="重置导出宽度" title="重置导出宽度">↶</button></span></label>
-          <label>高度 <span><input id="exportHeight" type="number" min="64" max="8192" value="4096"><em>px</em><button class="parameter-reset" id="resetExportHeight" type="button" aria-label="重置导出高度" title="重置导出高度">↶</button></span></label>
+    <aside class="panel" aria-label="预览与图片设置">
+      <div class="model-panel" id="modelPanel">
+        <details class="panel-section export-section" id="exportSettings">
+          <summary class="export-heading" id="exportHeading">导出设置</summary>
+          <div class="resolution-controls" role="group" aria-label="分辨率与比例">
+            <div class="resolution-select-grid">
+              <label class="select-row compact-select-row" for="resolutionPreset">
+                <strong>分辨率</strong>
+                <select id="resolutionPreset">
+                  <option value="1024">1K</option>
+                  <option value="2048">2K</option>
+                  <option value="3072">3K</option>
+                  <option value="4096" selected>4K</option>
+                  <option value="custom">自定义</option>
+                </select>
+              </label>
+              <label class="select-row compact-select-row" for="resolutionAspect">
+                <strong>比例</strong>
+                <select id="resolutionAspect">
+                  <option value="1:1" selected>1 : 1</option>
+                  <option value="4:3">4 : 3</option>
+                  <option value="3:2">3 : 2</option>
+                  <option value="16:9">16 : 9</option>
+                  <option value="9:16">9 : 16</option>
+                  <option value="21:9">21 : 9</option>
+                  <option value="custom" hidden disabled>跟随宽高</option>
+                </select>
+              </label>
+            </div>
+            <div class="export-custom-dimensions" hidden>
+              <div class="dimension-grid">
+                <div class="export-dimension"><label for="exportWidth">宽度（px）</label><span><input id="exportWidth" type="number" min="64" max="8192" step="1" value="4096" aria-describedby="exportSizeRange exportDimensionFeedback"><button class="parameter-reset" id="resetExportWidth" type="button" aria-label="重置导出宽度" title="重置导出宽度">${parameterResetIcon}</button></span></div>
+                <div class="export-dimension"><label for="exportHeight">高度（px）</label><span><input id="exportHeight" type="number" min="64" max="8192" step="1" value="4096" aria-describedby="exportSizeRange exportDimensionFeedback"><button class="parameter-reset" id="resetExportHeight" type="button" aria-label="重置导出高度" title="重置导出高度">${parameterResetIcon}</button></span></div>
+              </div>
+              <p class="export-help" id="exportSizeRange"></p>
+            </div>
+            <p class="export-dimension-feedback" id="exportDimensionFeedback" role="status"></p>
+          </div>
+          <div class="export-background-controls">
+            <div class="switch-row">
+              <strong><label for="transparentToggle">透明背景</label></strong>
+              <label class="switch-control"><input id="transparentToggle" type="checkbox" role="switch" aria-label="透明背景"><i></i></label>
+            </div>
+            <div class="switch-row" hidden>
+              <strong><label for="preserveShadowToggle">保留地面阴影</label></strong>
+              <label class="switch-control"><input id="preserveShadowToggle" type="checkbox" role="switch" aria-label="保留地面阴影" disabled><i></i></label>
+            </div>
+            <div class="color-row" id="exportBackgroundRow">
+              <label for="backgroundColor">背景颜色</label>
+              <span class="color-control"><input id="backgroundColor" type="color" value="#e8eaed"><code id="colorValue">#E8EAED</code><button class="parameter-reset" id="resetBackground" type="button" aria-label="重置背景颜色" title="重置背景颜色">${parameterResetIcon}</button></span>
+            </div>
+          </div>
+          <p class="export-help export-background-help" id="exportBackgroundHelp" hidden>关闭透明背景可设置 PNG 的实色背景。</p>
+          <details class="export-advanced" id="exportAdvanced">
+            <summary><span>质量与设备信息</span><span id="exportQualitySummary"></span></summary>
+            <label class="select-row" for="exportQuality">
+              <strong>导出质量</strong>
+              <select id="exportQuality" aria-describedby="exportQualityHelp">
+                <option value="standard"${state.exportQuality === ExportQualityMode.STANDARD ? ' selected' : ''}>标准</option>
+                <option value="high"${state.exportQuality === ExportQualityMode.HIGH ? ' selected' : ''}>高质量</option>
+              </select>
+            </label>
+            <p class="export-help" id="exportQualityHelp">实色 PNG 可用高质量档平滑高对比边缘。透明 PNG 固定使用标准采样。切换档位会更新贴图锐度，锐度也可单独调整。</p>
+            <label class="select-row" for="textureDetailMode">
+              <strong>贴图锐度</strong>
+              <select id="textureDetailMode" aria-describedby="textureDetailHelp">
+                <option value="adaptive"${state.textureDetailMode === 'adaptive' ? ' selected' : ''}>自适应（更稳定）</option>
+                <option value="base-level"${state.textureDetailMode === 'base-level' ? ' selected' : ''}>原图优先（更锐利）</option>
+              </select>
+            </label>
+            <p class="export-help" id="textureDetailHelp">原图优先可保留斜面文字和细线，也可能增加摩尔纹。</p>
+            <p class="export-help export-capability" id="exportCapability"></p>
+          </details>
+        </details>
+        <nav class="settings-category-navigation" aria-label="模型参数">
+          ${settingsCategoryButton('camera', '相机')}
+          ${settingsCategoryButton('post', '后处理')}
+          ${settingsCategoryButton('lighting', '灯光')}
+          ${settingsCategoryButton('material', '材质')}
+        </nav>
+        <div class="model-panel-scroll">
+          <div class="model-parameters">
+            <p class="model-panel-empty" id="modelPanelEmpty" hidden>选择上方的参数类别。</p>
+            <section class="settings-category-panel" id="settings-category-camera" data-settings-category-panel="camera" aria-labelledby="settings-toggle-camera">
+              <div class="settings-category-panel-inner">
+                <div class="panel-section camera-section">
+                  ${controlTemplate('垂直视野', 'fov', 10, 90, 1, '°', '度')}
+                  ${controlTemplate('水平旋转', 'theta', -180, 180, 1, '°', '度')}
+                  ${controlTemplate('俯仰角', 'phi', 1, 179, 1, '°', '度')}
+                  ${controlTemplate('相机距离', 'radius', 0.000001, 10, 0.001, 'm', '米')}
+                  ${controlTemplate('垂直镜头偏移', 'verticalShift', -50, 50, 1, '%', '百分比')}
+                  <label class="switch-row camera-correction" for="buildingCorrection">
+                    <span><strong>建筑透视校正</strong><small id="buildingCorrectionHelp">保持相机角度，使画面中的竖直线平行。</small></span>
+                    <span class="switch-control"><input id="buildingCorrection" type="checkbox" role="switch" aria-label="建筑透视校正" aria-describedby="buildingCorrectionHelp"><i aria-hidden="true"></i></span>
+                  </label>
+                  <div class="camera-reset-actions">
+                    <button class="secondary-button" id="resetCamera" type="button">重置视角</button>
+                    <button class="secondary-button" id="undoCameraReset" type="button" hidden>撤销重置</button>
+                  </div>
+                  <p class="message camera-message" id="cameraMessage" role="status"></p>
+                </div>
+              </div>
+            </section>
+            ${studioPanelTemplate()}
+          </div>
         </div>
-        <p class="export-capability" id="exportCapability" aria-live="polite"></p>
-        <div class="presets" aria-label="常用分辨率">
-          ${[[512,512],[1024,1024],[1920,1080],[2048,2048],[3840,2160],[4096,4096],[8192,8192]].map(([w,h]) => `<button type="button" data-size="${w}x${h}">${w} × ${h}</button>`).join('')}
-        </div>
-        <label class="select-row" for="exportQuality">
-          <span><strong>导出质量</strong><small>高质量以 FXAA 平滑高对比边缘</small></span>
-          <select id="exportQuality">
-            <option value="standard"${state.exportQuality === ExportQualityMode.STANDARD ? ' selected' : ''}>标准</option>
-            <option value="high"${state.exportQuality === ExportQualityMode.HIGH ? ' selected' : ''}>高质量（FXAA）</option>
-          </select>
-        </label>
-        <label class="select-row" for="textureDetailMode">
-          <span><strong>贴图锐度</strong><small>原图优先可保留斜面文字与细线</small></span>
-          <select id="textureDetailMode">
-            <option value="adaptive"${state.textureDetailMode === 'adaptive' ? ' selected' : ''}>自适应（更稳定）</option>
-            <option value="base-level"${state.textureDetailMode === 'base-level' ? ' selected' : ''}>原图优先（更锐利）</option>
-          </select>
-        </label>
-        <label class="switch-row">
-          <span><strong>透明背景</strong><small>导出 PNG 时移除底色</small></span>
-          <input id="transparentToggle" type="checkbox" role="switch"><i></i>
-        </label>
-        <label class="switch-row">
-          <span><strong>保留阴影</strong><small>仅透明 PNG 可用，保留半透明地面阴影</small></span>
-          <input id="preserveShadowToggle" type="checkbox" role="switch" disabled><i></i>
-        </label>
-        <button class="primary-button" id="exportButton" type="button" disabled>
-          <span class="button-label">导出 PNG</span><span class="button-meta">4096 × 4096</span>
-        </button>
-        <p class="message" id="message" aria-live="polite"></p>
-      </section>
-
-      ${appearanceVariantTemplate()}
-
-      <section class="panel-section">
-        <div class="section-heading"><span>02</span><h2>相机</h2></div>
-        ${controlTemplate('水平旋转', 'theta', -180, 180, 1, '°')}
-        ${controlTemplate('俯仰角', 'phi', 1, 179, 1, '°')}
-        ${controlTemplate('相机距离', 'radius', 0.000001, 10, 0.001, 'm')}
-        ${controlTemplate('垂直 FOV', 'fov', 10, 90, 1, '°')}
-        ${controlTemplate('垂直镜头偏移', 'verticalShift', -50, 50, 1, '%')}
-        <label class="switch-row">
-          <span><strong>建筑透视校正</strong><small>保持相机角度不变，使竖直线平行</small></span>
-          <input id="buildingCorrection" type="checkbox" role="switch"><i></i>
-        </label>
-        <button class="secondary-button" id="resetCamera" type="button">重置视角</button>
-      </section>
-
-      <section class="panel-section">
-        <div class="section-heading"><span>03</span><h2>画面</h2></div>
-        <label class="color-row" for="backgroundColor">
-          <span>背景颜色</span>
-          <span class="color-control"><input id="backgroundColor" type="color" value="#e8eaed"><code id="colorValue">#E8EAED</code><button class="parameter-reset" id="resetBackground" type="button" aria-label="重置背景颜色" title="重置背景颜色">↶</button></span>
-        </label>
-      </section>
-
-      ${studioPanelTemplate()}
+        <footer class="model-export-footer">
+          <div class="model-export-actions">
+            <div class="model-export-summary"><span>输出尺寸</span><strong id="exportFooterSummary">4096 × 4096 px</strong></div>
+            <button class="primary-button" id="exportButton" type="button" disabled><span class="button-label">导出 PNG</span></button>
+          </div>
+          <p class="message" id="exportStatus" role="status"></p>
+        </footer>
       </div>
       <div class="sequence-panel" id="sequencePanel" hidden>
         <section class="panel-section">
-          <div class="section-heading"><span>01</span><h2>保存图片</h2></div>
+          <div class="section-heading"><h2>保存图片</h2></div>
           <div class="sequence-current"><small>当前原始帧</small><strong id="sequenceFilename">尚未选择产品</strong><span id="sequenceResolution"></span></div>
-          <button class="primary-button" id="sequenceDownload" type="button" disabled><span class="button-label">保存原始 PNG</span><span class="button-meta" id="sequenceDownloadMeta">原图</span></button>
+          <button class="primary-button" id="sequenceDownload" type="button" disabled><span class="button-label">保存原始 PNG</span></button>
           <p class="message" id="sequenceMessage" aria-live="polite"></p>
         </section>
+        ${sequenceBackgroundPanel()}
         <section class="panel-section">
-          <div class="section-heading"><span>02</span><h2>观看控制</h2></div>
-          <label class="switch-row">
+          <div class="section-heading"><h2>观看控制</h2></div>
+          <div class="switch-row">
             <span><strong>自动旋转</strong><small id="sequencePlaybackStatus">打开产品后以每秒 8 帧播放一次</small></span>
-            <input id="sequenceAutoToggle" type="checkbox" role="switch"><i></i>
-          </label>
-          <label class="switch-row">
+            <label class="switch-control"><input id="sequenceAutoToggle" type="checkbox" role="switch" aria-label="自动旋转"><i></i></label>
+          </div>
+          <div class="switch-row">
             <span><strong>左右反向</strong><small>反转水平拖动的旋转方向</small></span>
-            <input id="sequenceReverseToggle" type="checkbox" role="switch"><i></i>
-          </label>
-          <div class="sequence-stat"><span>当前俯角</span><strong id="sequencePanelAngle">—</strong></div>
+            <label class="switch-control"><input id="sequenceReverseToggle" type="checkbox" role="switch" aria-label="左右反向"><i></i></label>
+          </div>
           <div class="sequence-stat"><span>缩放比例</span><strong id="sequenceScale">100%</strong></div>
-          <button class="secondary-button" id="sequencePanelReset" type="button" disabled>重置观看角度</button>
         </section>
         <section class="panel-section">
-          <div class="section-heading"><span>03</span><h2>产品信息</h2></div>
+          <div class="section-heading"><h2>产品信息</h2></div>
           <div class="sequence-product-info"><span>产品</span><strong id="sequenceProductName">—</strong></div>
-          <div class="sequence-facts"><div><strong id="sequenceAngleCount">0</strong><small>俯角</small></div><div><strong id="sequenceTotalFrames">0</strong><small>总帧</small></div></div>
+          <div class="sequence-facts"><span><strong id="sequenceAngleCount">0</strong> 个俯角</span><span><strong id="sequenceTotalFrames">0</strong> 帧</span></div>
         </section>
       </div>
     </aside>
@@ -292,7 +362,7 @@ document.querySelector('#app').innerHTML = `
   </div>
   <dialog class="thumbnail-variant-dialog" id="thumbnailVariantDialog">
     <form method="dialog">
-      <div class="build-dialog-heading"><div><span class="eyebrow">MODEL COVER</span><h2>选择模型封面外观</h2></div><button id="thumbnailVariantCancel" type="button" aria-label="取消">×</button></div>
+      <div class="build-dialog-heading"><h2>选择模型封面外观</h2><button id="thumbnailVariantCancel" type="button" aria-label="取消">×</button></div>
       <p class="thumbnail-variant-note">选择此次生成要使用的外观变体。新封面将替换当前模型封面。</p>
       <div class="thumbnail-variant-options" id="thumbnailVariantOptions" role="radiogroup" aria-label="模型封面外观"></div>
       <div class="thumbnail-variant-actions"><button class="secondary-button" id="thumbnailVariantBack" type="button">取消</button><button class="primary-button" id="thumbnailVariantConfirm" type="button">生成并替换封面</button></div>
@@ -300,7 +370,7 @@ document.querySelector('#app').innerHTML = `
   </dialog>
   <dialog class="thumbnail-batch-dialog" id="thumbnailBatchDialog">
     <form method="dialog">
-      <div class="build-dialog-heading"><div><span class="eyebrow">BATCH MODEL COVERS</span><h2>批量生成模型封面</h2></div><button id="thumbnailBatchClose" type="button" aria-label="关闭">×</button></div>
+      <div class="build-dialog-heading"><h2>批量生成模型封面</h2><button id="thumbnailBatchClose" type="button" aria-label="关闭">×</button></div>
       <div id="thumbnailBatchSetup">
         <div class="build-summary"><div><small>模型</small><strong id="thumbnailBatchTotal">0</strong></div><div><small>生成方式</small><strong>串行</strong></div></div>
         <fieldset class="batch-choice"><legend>封面范围</legend><label><input type="radio" name="thumbnailOverwrite" value="missing" checked> 仅生成缺失封面</label><label><input type="radio" name="thumbnailOverwrite" value="all"> 全部重新生成</label></fieldset>
@@ -320,11 +390,11 @@ document.querySelector('#app').innerHTML = `
   </dialog>
 `;
 
-function controlTemplate(label, id, min, max, step, unit) {
+function controlTemplate(label, id, min, max, step, unit, unitName) {
   const value = id === 'verticalShift' ? state[id] * 100 : state[id];
   return `<div class="control-row" data-control="${id}">
-    <div class="control-label"><label for="${id}Range">${label}</label><span><input id="${id}Number" type="number" min="${min}" max="${max}" step="${step}" value="${value}"><em>${unit}</em><button class="parameter-reset" data-camera-reset="${id}" type="button" aria-label="重置${label}" title="重置${label}">↶</button></span></div>
-    <input id="${id}Range" class="range" type="range" min="${min}" max="${max}" step="${step}" value="${value}">
+    <div class="control-label"><label for="${id}Number">${label}</label><span><input id="${id}Number" type="number" min="${min}" max="${max}" step="${step}" value="${value}" aria-label="${label}（${unitName}）"><em aria-hidden="true">${unit}</em><button class="parameter-reset" data-camera-reset="${id}" type="button" aria-label="重置${label}" title="重置${label}">${parameterResetIcon}</button></span></div>
+    <input id="${id}Range" class="range" type="range" min="${min}" max="${max}" step="${step}" value="${value}" aria-label="${label}（${unitName}）">
   </div>`;
 }
 
@@ -332,11 +402,32 @@ const viewer = document.querySelector('#modelViewer');
 const shell = document.querySelector('#viewerShell');
 const viewerFrame = document.querySelector('#viewerFrame');
 const status = document.querySelector('#modelStatus');
+const themeToggle = document.querySelector('#themeToggle');
+const THEME_STORAGE_KEY = 'glb-viewer:theme:v1';
+
+function applyTheme(theme, { persist = true } = {}) {
+  const nextTheme = theme === 'light' ? 'light' : 'dark';
+  document.body.dataset.theme = nextTheme;
+  themeToggle.setAttribute('aria-pressed', String(nextTheme === 'light'));
+  themeToggle.querySelector('span:first-child').textContent = nextTheme === 'light' ? '☾' : '☼';
+  themeToggle.querySelector('span:last-child').textContent = nextTheme === 'light' ? '深色' : '浅色';
+  themeToggle.title = nextTheme === 'light' ? '切换深色主题' : '切换浅色主题';
+  if (persist) {
+    try { localStorage.setItem(THEME_STORAGE_KEY, nextTheme); } catch { /* optional persistence */ }
+  }
+}
+
+let savedTheme = 'dark';
+try { savedTheme = localStorage.getItem(THEME_STORAGE_KEY) === 'light' ? 'light' : 'dark'; } catch { /* optional persistence */ }
+applyTheme(savedTheme, { persist: false });
+themeToggle.addEventListener('click', () => applyTheme(document.body.dataset.theme === 'light' ? 'dark' : 'light'));
 const errorBox = document.querySelector('#viewerError');
 const modelLoadingOverlay = document.querySelector('#modelLoadingOverlay');
 const modelLoadingText = document.querySelector('#modelLoadingText');
 const exportButton = document.querySelector('#exportButton');
 const message = document.querySelector('#message');
+const exportStatus = document.querySelector('#exportStatus');
+const cameraMessage = document.querySelector('#cameraMessage');
 const workspace = document.querySelector('.workspace');
 const controlPanel = document.querySelector('.panel');
 const library = document.querySelector('#modelLibrary');
@@ -347,8 +438,101 @@ const generateThumbnailButton = document.querySelector('#generateThumbnail');
 const contextMenuHint = document.querySelector('#contextMenuHint');
 const renderStudio = new RenderStudio(viewer, document.querySelector('#renderStudio'), { onMessage: showMessage });
 const appearanceVariantSelector = new AppearanceVariantSelector(viewer, document.querySelector('#appearanceVariants'));
+const modelPanel = document.querySelector('#modelPanel');
+const modelPanelScroll = modelPanel.querySelector('.model-panel-scroll');
+const exportSettings = modelPanel.querySelector('#exportSettings');
+const compactSettingsLayout = matchMedia('(max-width: 980px), (max-height: 620px)');
+const modelPanelEmpty = modelPanel.querySelector('#modelPanelEmpty');
+const settingsCategoryButtons = [...modelPanel.querySelectorAll('[data-settings-toggle]')];
+const settingsCategoryPanels = [...modelPanel.querySelectorAll('[data-settings-category-panel]')];
+let activeSettingsCategory = null;
+let previewCaptureActive = false;
+
+function syncSettingsAvailability() {
+  for (const panel of settingsCategoryPanels) {
+    const category = panel.dataset.settingsCategoryPanel;
+    const active = category === activeSettingsCategory;
+    panel.inert = !active || previewCaptureActive;
+    panel.hidden = !active;
+    panel.setAttribute('aria-hidden', String(!active));
+  }
+}
+
+function setPreviewCaptureActive(active) {
+  previewCaptureActive = active;
+  viewer.inert = active;
+  syncSettingsAvailability();
+}
+
+function setActiveSettingsCategory(category) {
+  activeSettingsCategory = category;
+  for (const button of settingsCategoryButtons) {
+    button.setAttribute('aria-expanded', String(button.dataset.settingsToggle === category));
+  }
+  syncSettingsAvailability();
+  modelPanelEmpty.hidden = category !== null;
+}
+
+function firstSettingsControl(panel) {
+  if (panel.inert) return null;
+  return [...panel.querySelectorAll(':is(input, select, button):enabled, summary')]
+    .find((control) => control.getClientRects().length) ?? null;
+}
+
+for (const button of settingsCategoryButtons) {
+  button.addEventListener('click', (event) => {
+    if (modelPanelScroll.contains(document.activeElement)) button.focus({ preventScroll: true });
+    const category = button.dataset.settingsToggle;
+    const panel = document.getElementById(button.getAttribute('aria-controls'));
+    const scrollBounds = modelPanelScroll.getBoundingClientRect();
+    const controlBounds = firstSettingsControl(panel)?.getBoundingClientRect();
+    const keyboardActivation = event.detail === 0;
+    const firstControlIsVisible = controlBounds && controlBounds.top >= scrollBounds.top && controlBounds.bottom <= scrollBounds.bottom;
+    if (activeSettingsCategory === category && firstControlIsVisible && !keyboardActivation) {
+      setActiveSettingsCategory(null);
+      return;
+    }
+    setActiveSettingsCategory(category);
+    const firstControl = firstSettingsControl(panel);
+    if (compactSettingsLayout.matches && exportSettings.open && firstControl &&
+        firstControl.getBoundingClientRect().bottom - panel.getBoundingClientRect().top > modelPanelScroll.clientHeight) {
+      exportSettings.open = false;
+    }
+    const viewport = modelPanelScroll.getBoundingClientRect();
+    const panelTop = panel.getBoundingClientRect().top;
+    const firstBounds = firstControl?.getBoundingClientRect();
+    const revealTop = firstBounds && firstBounds.bottom - panelTop > viewport.height
+      ? firstBounds.top - 8
+      : panelTop;
+    modelPanelScroll.scrollTop += revealTop - viewport.top;
+    if (keyboardActivation) firstControl?.focus({ preventScroll: true });
+  });
+}
+modelPanel.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape' || event.defaultPrevented || !activeSettingsCategory || document.querySelector('dialog[open]')) return;
+  const button = settingsCategoryButtons.find(({ dataset }) => dataset.settingsToggle === activeSettingsCategory);
+  const panel = document.getElementById(button.getAttribute('aria-controls'));
+  if (event.target !== button && !panel.contains(event.target)) return;
+  const variantPopover = modelPanel.querySelector('#appearanceVariantPopover:not([hidden])');
+  if (variantPopover && panel.contains(variantPopover)) {
+    appearanceVariantSelector.closePopover();
+    modelPanel.querySelector('#appearanceVariantToggle').focus();
+    event.preventDefault();
+    return;
+  }
+  button.focus({ preventScroll: true });
+  setActiveSettingsCategory(null);
+  event.preventDefault();
+});
+setActiveSettingsCategory('camera');
+exportSettings.open = !compactSettingsLayout.matches;
+compactSettingsLayout.addEventListener('change', ({ matches }) => {
+  if (!exportSettings.contains(document.activeElement)) exportSettings.open = !matches;
+});
 const sequenceRoot = document.querySelector('#sequenceViewer');
 const sequenceViewer = new SequenceViewer(sequenceRoot);
+const sequenceBackground = new SequenceBackground(sequenceRoot, document.querySelector('#sequenceBackground'),
+  document.querySelector('#sequenceGradientOverlay'));
 
 function syncLibraryLayout() {
   const open = state.modelLibraryOpen;
@@ -361,10 +545,13 @@ syncLibraryLayout();
 // Chromium otherwise treats the overlay as its containing block, while the
 // pointer coordinates below are relative to the viewport.
 document.body.append(contextMenu);
+const undoCameraReset = document.querySelector('#undoCameraReset');
+let cameraResetUndo = null;
 const cameraControls = [
   ...document.querySelectorAll('[data-control] input'),
   document.querySelector('#buildingCorrection'),
   document.querySelector('#resetCamera'),
+  undoCameraReset,
 ];
 const verticalShiftControls = [
   ...document.querySelectorAll('[data-control="verticalShift"] input'),
@@ -397,7 +584,7 @@ function applyLensProjection(target, framing) {
 
 function setStatus(text, type = '') {
   status.className = `status-pill ${type}`;
-  status.innerHTML = `<span></span>${text}`;
+  status.innerHTML = `<span></span>${escapeHtml(text)}`;
 }
 
 function setModelLoading(loading, modelName = '') {
@@ -413,7 +600,9 @@ function escapeHtml(value) {
 
 function updateLibrarySearch(mode, visibleCount, totalCount) {
   const input = document.querySelector('#librarySearch');
-  input.placeholder = mode === 'sequence' ? '搜索360°产品名称或文件夹' : '搜索模型名称或文件夹';
+  const searchLabel = mode === 'sequence' ? '搜索产品或文件夹' : '搜索模型或文件夹';
+  input.placeholder = searchLabel;
+  input.setAttribute('aria-label', searchLabel);
   if (input.value !== state.libraryQuery) input.value = state.libraryQuery;
   document.querySelector('#clearLibrarySearch').hidden = !state.libraryQuery;
   document.querySelector('#libraryCount').textContent = state.libraryQuery
@@ -458,9 +647,9 @@ function renderModelLibrary() {
     const thumbnailUrl = folderThumbnailUrl(path, state.models);
     return `<button class="library-card folder-card${thumbnailUrl ? ' with-cover' : ''}" type="button" data-folder="${escapeHtml(path)}" data-thumbnail-folder="${escapeHtml(path)}">
       ${thumbnailUrl
-        ? `<span class="thumbnail folder-preview"><img src="${escapeHtml(thumbnailUrl)}" alt="" loading="lazy"><span class="folder-preview-label" aria-hidden="true"><span class="folder-symbol"></span>文件夹</span></span>`
+        ? `<span class="thumbnail folder-preview"><img src="${escapeHtml(thumbnailUrl)}" alt="" loading="lazy"><span class="folder-preview-label"><span class="folder-symbol" aria-hidden="true"></span>文件夹</span></span>`
         : '<span class="folder-icon" aria-hidden="true"></span>'}
-      <strong class="folder-title">${thumbnailUrl ? '<span class="folder-symbol" aria-hidden="true"></span>' : ''}<span class="folder-name">${escapeHtml(folder)}</span></strong><small>打开文件夹</small>
+      <strong>${escapeHtml(folder)}</strong>${thumbnailUrl ? '' : '<small>文件夹</small>'}
     </button>`;
     }),
   ];
@@ -478,10 +667,10 @@ function renderModelLibrary() {
   const modelCards = entries.models.map(modelCard);
   const recentSection = !searching && !state.currentFolder && state.models.length
     ? `<section class="recent-models" aria-labelledby="recentModelsTitle">
-        <div class="library-section-title"><h3 id="recentModelsTitle">最近更新</h3><span>最新添加的模型 · 最多 10 个</span></div>
+        <div class="library-section-title"><h3 id="recentModelsTitle">最近添加</h3></div>
         <div class="recent-grid">${recentModels(10).map(modelCard).join('')}</div>
       </section>
-      <div class="library-section-title browse-title"><h3>浏览文件夹</h3><span>按目录查找全部模型</span></div>`
+      <div class="library-section-title browse-title"><h3>浏览文件夹</h3></div>`
     : '';
   libraryGrid.innerHTML = recentSection + [...folderCards, ...modelCards].join('') ||
     `<div class="library-empty">${searching ? `没有找到与“${escapeHtml(state.libraryQuery.trim())}”匹配的模型。` : '这个文件夹中没有可预览的 GLB 模型。'}</div>`;
@@ -509,11 +698,11 @@ function renderSequenceLibrary() {
       <span class="folder-icon back" aria-hidden="true"></span><strong>返回上一级</strong><small>${escapeHtml(sequenceParentFolder(state.sequenceFolder) || '全部产品')}</small></button>`] : []),
     ...entries.folders.map((folder) => {
       const path = state.sequenceFolder ? `${state.sequenceFolder}/${folder}` : folder;
-      return `<button class="library-card folder-card" type="button" data-sequence-folder="${escapeHtml(path)}"><span class="folder-icon" aria-hidden="true"></span><strong>${escapeHtml(folder)}</strong><small>打开文件夹</small></button>`;
+      return `<button class="library-card folder-card" type="button" data-sequence-folder="${escapeHtml(path)}"><span class="folder-icon" aria-hidden="true"></span><strong>${escapeHtml(folder)}</strong><small>文件夹</small></button>`;
     }),
   ];
   const cards = entries.products.map((product) => `<button class="library-card sequence-card${state.selectedSequence?.id === product.id ? ' selected' : ''}" type="button" data-sequence-id="${escapeHtml(product.id)}">
-    <span class="thumbnail"><img src="${escapeHtml(product.thumbnailUrl)}" alt="" loading="lazy" decoding="async" fetchpriority="low"><b class="sequence-badge">360°</b></span>
+    <span class="thumbnail"><img src="${escapeHtml(product.thumbnailUrl)}" alt="" loading="lazy" decoding="async" fetchpriority="low"></span>
     <strong>${escapeHtml(product.name)}</strong><small>${product.angles.length} 个俯角 · ${product.totalFrames} 帧</small>
   </button>`);
   libraryGrid.innerHTML = state.sequenceLibraryLoading
@@ -539,10 +728,10 @@ function openContextMenu(event, model) {
     ? '正在生成缩略图…'
     : '自动生成缩略图';
   contextMenuHint.textContent = !state.thumbnailCapabilityReady
-    ? '正在检查本机写入权限…'
+    ? '正在检查缩略图写入权限…'
     : state.thumbnailWritable
       ? `${state.selectedModelIds.size > 1 ? `已选 ${state.selectedModelIds.size} 个 · ` : ''}固定 640 × 480 · 当前预览视角`
-      : '当前设备只读；请在服务主机上操作';
+      : '当前服务不支持保存缩略图';
   contextMenu.hidden = false;
   contextMenu.style.left = '0px';
   contextMenu.style.top = '0px';
@@ -591,7 +780,7 @@ async function reloadSequenceLibrary() {
 function thumbnailErrorMessage(error) {
   if (error.message === 'MODEL_LOAD_FAILED' || error.message === 'MODEL_TIMEOUT') return '模型载入失败，无法生成缩略图。';
   if (['IMAGE_ENCODE_FAILED', 'IMAGE_SIZE_MISMATCH', 'RENDER_SIZE_MISMATCH', 'EMPTY_RENDER'].includes(error.code ?? error.message)) return '浏览器未能生成 640 × 480 WebP，请检查 WebGL 支持。';
-  if (error.message === 'READ_ONLY_CLIENT' || error.status === 403) return '当前设备没有写入权限，请在服务主机上操作。';
+  if (error.message === 'INVALID_ORIGIN' || error.status === 403) return '请求来源未通过校验，请从当前服务页面重试。';
   if (error.code === 'MATERIAL_LOAD_FAILED') return '模型材质加载失败，无法生成完整的缩略图。';
   if (error.code === 'VARIANT_UNAVAILABLE') return '选择的外观变体已不可用，请重新选择。';
   if (error.code === 'VARIANT_APPLY_TIMEOUT') return '外观变体应用超时，未生成模型封面。';
@@ -731,22 +920,20 @@ function switchMode(mode) {
   state.mode = mode;
   state.libraryQuery = '';
   state.selectedModelIds.clear();
+  workspace.dataset.previewMode = mode;
   shell.dataset.mode = mode;
   document.querySelectorAll('[data-mode]').forEach((button) => {
     const active = button.dataset.mode === mode;
     button.classList.toggle('active', active);
     button.setAttribute('aria-pressed', String(active));
   });
-  document.querySelector('#modelPanel').hidden = mode !== 'model';
+  modelPanel.hidden = mode !== 'model';
   document.querySelector('#sequencePanel').hidden = mode !== 'sequence';
   viewer.hidden = mode !== 'model';
   sequenceRoot.hidden = mode !== 'sequence';
   document.querySelector('#sequenceToolbar').hidden = mode !== 'sequence' || !state.selectedSequence;
   document.querySelector('#openLibrary').textContent = mode === 'model' ? '选择模型' : '选择产品';
-  document.querySelector('#gestureTip').textContent = mode === 'model'
-    ? '左键旋转 · 滚轮/双指缩放 · 右键平移'
-    : '左右循环旋转 · 上下切换俯角 · 滚轮/双指缩放';
-  document.querySelector('#frameLabel').textContent = mode === 'model' ? `${state.width} × ${state.height} · ${(state.width / state.height).toFixed(2)}:1` : '360° PRODUCT VIEW';
+  document.querySelector('#frameLabel').hidden = mode !== 'model';
   if (mode === 'sequence') {
     if (state.selectedSequence) {
       selectSequence(state.selectedSequence);
@@ -760,6 +947,7 @@ function switchMode(mode) {
   } else {
     setStatus(state.selectedModel?.name || '等待选择模型', state.loaded ? 'ready' : '');
     if (!state.selectedModel) openModelLibrary();
+    sequenceBackground.setReady(false);
     sequenceViewer.unload();
   }
   renderModelLibrary();
@@ -785,13 +973,12 @@ function setSequenceMessage(text, type = '') {
 
 function updateSequenceUI(detail = sequenceViewer.snapshot()) {
   const { frame, product, ready, loading, buffering, frameFailed } = detail;
+  sequenceBackground.setReady(state.mode === 'sequence' && ready);
   document.querySelector('#sequenceAngle').textContent = detail.angle === null ? '俯角 —' : `俯角 ${detail.angle}°`;
-  document.querySelector('#sequencePanelAngle').textContent = detail.angle === null ? '—' : `${detail.angle}°`;
   document.querySelector('#sequenceFrame').textContent = detail.frameCount ? `${detail.framePosition} / ${detail.frameCount}` : '— / —';
   document.querySelector('#sequenceScale').textContent = `${Math.round(detail.scale * 100)}%`;
   document.querySelector('#sequenceFilename').textContent = frame?.originalFilename ?? (product ? '—' : '尚未选择产品');
   document.querySelector('#sequenceResolution').textContent = frame?.width && frame?.height ? `${frame.width} × ${frame.height} PNG` : '';
-  document.querySelector('#sequenceDownloadMeta').textContent = frame ? `帧 ${frame.index}` : '原图';
   document.querySelector('#sequenceProductName').textContent = product?.name ?? '—';
   document.querySelector('#sequenceAngleCount').textContent = product?.angles.length ?? 0;
   document.querySelector('#sequenceTotalFrames').textContent = detail.total;
@@ -809,7 +996,6 @@ function updateSequenceUI(detail = sequenceViewer.snapshot()) {
   document.querySelector('#sequenceRetryFrame').hidden = !frameFailed;
   document.querySelector('#sequenceDownload').disabled = !frame || !ready || sequenceDownloading;
   document.querySelector('#sequenceReset').disabled = !ready;
-  document.querySelector('#sequencePanelReset').disabled = !ready;
   document.querySelector('#sequenceAutoToggle').checked = detail.autoRotate;
   document.querySelector('#sequenceAutoToggle').disabled = !ready;
   document.querySelector('#sequenceReverseToggle').checked = detail.reverse;
@@ -857,6 +1043,9 @@ async function downloadSequenceFrame() {
 
 async function resetModelRuntime() {
   state.loaded = false;
+  clearCameraResetUndo();
+  showCameraMessage('');
+  showMessage('', '', exportStatus);
   state.renderQuality = {
     applied: false,
     compatibility: false,
@@ -925,12 +1114,8 @@ async function prepareLoadedModel(model) {
   setCameraControlsDisabled(false);
   setVerticalShiftAvailable(shiftCapability.available);
   exportButton.disabled = false;
-  showMessage(!shiftCapability.available
-    ? '垂直镜头偏移与建筑校正当前不可用；普通相机功能不受影响。'
-    : !state.renderQuality.compatibility
-    ? '当前浏览器已启用最佳通用纹理过滤；最大各向异性兼容层不可用。'
-    : `已加载 ${model.name}；${state.renderQuality.maximumAnisotropy}× 各向异性。`,
-  !shiftCapability.available || !state.renderQuality.compatibility ? 'error' : 'success');
+  if (!shiftCapability.available) showCameraMessage('当前设备无法使用垂直镜头偏移和建筑透视校正。', 'error');
+  showMessage(state.renderQuality.compatibility ? '' : '当前浏览器使用通用纹理过滤。');
   requestAnimationFrame(syncCameraFromViewer);
 }
 
@@ -1109,6 +1294,7 @@ document.querySelector('#radiusRange').disabled = true;
       ? Math.max(minimum, numericValue)
       : clamp(numericValue, Number(range.min), Number(range.max));
     if (id === 'verticalShift') value /= 100;
+    if (value !== state[id]) clearCameraResetUndo();
     if (id === 'fov' && value !== state.fov) {
       const resolved = resolveFovChange({
         radius: state.radius,
@@ -1122,10 +1308,11 @@ document.querySelector('#radiusRange').disabled = true;
         ? 2 * Math.atan(framingInvariant(state.radius, state.fov) / safety.radius) * 180 / Math.PI
         : resolved.fov;
       if (resolved.limited || safety.corrected) {
-        showMessage('已到模型表面，FOV 已受限以保持物体大小。', 'error');
-      } else if (message.textContent.includes('FOV 已受限')) {
-        showMessage('已解除近距 FOV 限制。', 'success');
+        showCameraMessage('已到模型表面。垂直视野受到限制，以保持画面中的物体大小。', 'error');
+      } else if (cameraMessage.dataset.fovLimited === 'true') {
+        showCameraMessage('已解除近距的垂直视野限制。', 'success');
       }
+      cameraMessage.dataset.fovLimited = String(resolved.limited || safety.corrected);
     }
     setControl(id, value);
     applyCamera({ immediate: ['fov', 'verticalShift'].includes(id) });
@@ -1150,6 +1337,7 @@ viewer.addEventListener('camera-change', (event) => {
   // Programmatic interpolation reports transient values. Only direct user
   // interaction is allowed to replace the stable camera goal state.
   if (event.detail.source !== 'user-interaction') return;
+  clearCameraResetUndo();
   cancelAnimationFrame(cameraSyncFrame);
   cameraSyncFrame = requestAnimationFrame(syncCameraFromViewer);
 });
@@ -1197,6 +1385,7 @@ function liveRadius() {
 
 function queueZoomRadius(radius) {
   if (!state.loaded || state.exporting || !Number.isFinite(radius) || radius <= 0) return;
+  clearCameraResetUndo();
   pendingZoomRadius = radius;
   if (zoomFrame) return;
   zoomFrame = requestAnimationFrame(() => {
@@ -1271,6 +1460,7 @@ viewer.addEventListener('keydown', (event) => {
 
 async function focusModel() {
   if (!state.loaded || state.exporting || state.mode !== 'model') return;
+  clearCameraResetUndo();
   viewer.cameraTarget = 'auto auto auto';
   await viewer.updateComplete;
   setControl('theta', 0);
@@ -1279,6 +1469,11 @@ async function focusModel() {
   setControl('fov', DEFAULT_SHARED_CAMERA_FRAMING.fov);
   await applyCamera({ immediate: true });
   showMessage('已聚焦模型。', 'success');
+}
+
+function showCameraMessage(text, type = '') {
+  showMessage(text, type, cameraMessage);
+  cameraMessage.dataset.fovLimited = 'false';
 }
 
 window.addEventListener('keydown', (event) => {
@@ -1294,9 +1489,22 @@ window.addEventListener('keydown', (event) => {
   focusModel();
 }, { capture: true });
 
-document.querySelector('#resetCamera').addEventListener('click', async () => {
+function clearCameraResetUndo() {
+  if (!cameraResetUndo) return;
+  cameraResetUndo = null;
+  undoCameraReset.hidden = true;
+}
+
+const resetCamera = document.querySelector('#resetCamera');
+resetCamera.addEventListener('click', async () => {
+  if (!state.loaded || state.exporting || cameraResetUndo) return;
+  const { theta, phi, radius, fov, verticalShift, buildingCorrection } = state;
+  const { x, y, z } = viewer.getCameraTarget();
+  const previous = { framing: { theta, phi, radius, fov, verticalShift }, buildingCorrection, target: `${x}m ${y}m ${z}m` };
+  cameraResetUndo = previous;
   viewer.cameraTarget = 'auto auto auto';
   await viewer.updateComplete;
+  if (cameraResetUndo !== previous) return;
   setControl('theta', 0);
   setControl('phi', 75);
   if (defaultRadius !== null) setControl('radius', roundDistance(defaultRadius));
@@ -1306,15 +1514,32 @@ document.querySelector('#resetCamera').addEventListener('click', async () => {
   document.querySelector('#buildingCorrection').checked = false;
   saveSharedCameraFraming(state);
   await applyCamera({ immediate: true });
-  showMessage('已恢复默认视角。', 'success');
+  if (cameraResetUndo !== previous) return;
+  undoCameraReset.hidden = false;
+  showCameraMessage('已恢复默认视角。', 'success');
+});
+
+undoCameraReset.addEventListener('click', async () => {
+  if (!cameraResetUndo || !state.loaded || state.exporting) return;
+  const model = state.selectedModel;
+  const { framing, buildingCorrection, target } = cameraResetUndo;
+  resetCamera.focus({ preventScroll: true });
+  clearCameraResetUndo();
+  viewer.cameraTarget = target;
+  state.buildingCorrection = buildingCorrection;
+  document.querySelector('#buildingCorrection').checked = buildingCorrection;
+  for (const [key, value] of Object.entries(framing)) setControl(key, value);
+  await applyCamera({ immediate: true });
+  if (state.loaded && state.selectedModel === model && !cameraResetUndo) showCameraMessage('已撤销视角重置。', 'success');
 });
 
 document.querySelector('#buildingCorrection').addEventListener('change', async (event) => {
+  clearCameraResetUndo();
   const corrected = applyBuildingCorrection(state, event.target.checked);
   state.buildingCorrection = corrected.buildingCorrection;
   saveSharedCameraFraming(state);
   await applyCamera({ immediate: true });
-  showMessage(state.buildingCorrection
+  showCameraMessage(state.buildingCorrection
     ? '已开启建筑透视校正；相机角度保持不变。'
     : '已关闭建筑透视校正。', 'success');
 });
@@ -1324,6 +1549,7 @@ function cameraDefaults() {
 }
 for (const button of document.querySelectorAll('[data-camera-reset]')) {
   button.addEventListener('click', async () => {
+    clearCameraResetUndo();
     const id = button.dataset.cameraReset;
     setControl(id, cameraDefaults()[id]);
     await applyCamera({ immediate: true });
@@ -1336,32 +1562,80 @@ function updateCameraResetButtons() {
 }
 
 const colorInput = document.querySelector('#backgroundColor');
+const resetBackground = document.querySelector('#resetBackground');
+const transparentToggle = document.querySelector('#transparentToggle');
+const preserveShadowToggle = document.querySelector('#preserveShadowToggle');
+const exportQualityInput = document.querySelector('#exportQuality');
+const textureDetailInput = document.querySelector('#textureDetailMode');
+const widthInput = document.querySelector('#exportWidth');
+const heightInput = document.querySelector('#exportHeight');
+const resolutionPreset = document.querySelector('#resolutionPreset');
+const resolutionAspect = document.querySelector('#resolutionAspect');
+const footerSummary = document.querySelector('#exportFooterSummary');
+const customDimensions = document.querySelector('.export-custom-dimensions');
+const dimensionFeedback = document.querySelector('#exportDimensionFeedback');
+const resetWidth = document.querySelector('#resetExportWidth');
+const resetHeight = document.querySelector('#resetExportHeight');
+const frameLabel = document.querySelector('#frameLabel');
+const exportCapability = readExportDimensionCapability();
+const exportCapabilityMessage = document.querySelector('#exportCapability');
+const maximumExportDimension = Math.min(
+  exportOptions.maximumDimension,
+  exportCapability.maximumDimension ?? exportOptions.maximumDimension,
+);
+let exportDimensionRevision = 0;
+
+exportOptions.setMaximumDimension(maximumExportDimension);
+widthInput.max = maximumExportDimension;
+heightInput.max = maximumExportDimension;
+document.querySelector('#exportSizeRange').textContent = `每边支持 64–${maximumExportDimension} px 的整数。`;
+exportCapabilityMessage.textContent = exportCapability.available
+  ? `可设置上限 ${maximumExportDimension} px。设备 WebGL 纹理上限 ${exportCapability.textureSize} px，渲染缓冲上限 ${exportCapability.renderbufferSize} px。`
+  : `可设置上限 ${maximumExportDimension} px。浏览器未提供 WebGL 尺寸上限，导出时将验证实际可用尺寸。`;
+const supportedPresets = [...resolutionPreset.options].filter((option) => {
+  if (option.value === 'custom') return false;
+  option.disabled = Number(option.value) > maximumExportDimension;
+  return !option.disabled;
+});
+if (resolutionPreset.selectedOptions[0].disabled) {
+  resolutionPreset.value = supportedPresets.at(-1)?.value ?? 'custom';
+}
+
+function updateBackgroundControls() {
+  colorInput.disabled = state.transparent;
+  resetBackground.disabled = state.transparent || state.background === '#e8eaed';
+  document.querySelector('#exportBackgroundRow').hidden = state.transparent;
+  document.querySelector('#exportBackgroundHelp').hidden = !state.transparent;
+  shell.classList.toggle('export-transparent', state.transparent);
+}
+
 colorInput.addEventListener('input', () => {
   state.background = colorInput.value;
   document.querySelector('#colorValue').textContent = colorInput.value.toUpperCase();
   shell.style.setProperty('--viewer-background', colorInput.value);
-  document.querySelector('#resetBackground').disabled = colorInput.value.toLowerCase() === '#e8eaed';
+  updateBackgroundControls();
 });
-document.querySelector('#resetBackground').addEventListener('click', () => {
+resetBackground.addEventListener('click', () => {
   colorInput.value = '#e8eaed';
   colorInput.dispatchEvent(new Event('input'));
 });
-document.querySelector('#resetBackground').disabled = true;
 
-const preserveShadowToggle = document.querySelector('#preserveShadowToggle');
 function applyExportOptions(snapshot = exportOptions.getSnapshot()) {
   Object.assign(state, snapshot, { maximumExportDimension: snapshot.maximumDimension });
-  widthInput.value = snapshot.width;
-  heightInput.value = snapshot.height;
-  document.querySelector('#exportQuality').value = snapshot.exportQuality;
-  document.querySelector('#textureDetailMode').value = snapshot.textureDetailMode;
-  document.querySelector('#transparentToggle').checked = snapshot.transparent;
+  exportQualityInput.value = snapshot.exportQuality;
+  textureDetailInput.value = snapshot.textureDetailMode;
+  transparentToggle.checked = snapshot.transparent;
   preserveShadowToggle.checked = snapshot.preserveShadow;
   preserveShadowToggle.disabled = !snapshot.transparent;
-  updateDimensions();
+  preserveShadowToggle.closest('.switch-row').hidden = !snapshot.transparent;
+  const quality = exportOptions.getExportPlan().antiAlias === 'fxaa' ? '高质量' : '标准采样';
+  const texture = snapshot.textureDetailMode === 'base-level' ? '原图优先' : '自适应';
+  document.querySelector('#exportQualitySummary').textContent = `${quality} · ${texture}`;
+  updateBackgroundControls();
+  updateExportSummary();
 }
 
-document.querySelector('#transparentToggle').addEventListener('change', (event) => {
+transparentToggle.addEventListener('change', (event) => {
   applyExportOptions(exportOptions.setOption('transparent', event.target.checked));
 });
 
@@ -1369,30 +1643,33 @@ preserveShadowToggle.addEventListener('change', (event) => {
   applyExportOptions(exportOptions.setOption('preserveShadow', event.target.checked));
 });
 
-document.querySelector('#exportQuality').addEventListener('change', (event) => {
+exportQualityInput.addEventListener('change', (event) => {
   applyExportOptions(exportOptions.setOption('exportQuality', event.target.value));
 });
 
-document.querySelector('#textureDetailMode').addEventListener('change', (event) => {
+textureDetailInput.addEventListener('change', (event) => {
   applyExportOptions(exportOptions.setOption('textureDetailMode', event.target.value));
 });
 
-const widthInput = document.querySelector('#exportWidth');
-const heightInput = document.querySelector('#exportHeight');
-const exportCapability = readExportDimensionCapability();
-const exportCapabilityMessage = document.querySelector('#exportCapability');
-if (exportCapability.available) {
-  exportOptions.setMaximumDimension(exportCapability.maximumDimension);
-  state.maximumExportDimension = exportOptions.maximumDimension;
-  widthInput.max = state.maximumExportDimension;
-  heightInput.max = state.maximumExportDimension;
-  exportCapabilityMessage.textContent = `设备 WebGL 单边上限：${state.maximumExportDimension}px（纹理 ${exportCapability.textureSize}px · 渲染缓冲 ${exportCapability.renderbufferSize}px）`;
-} else {
-  exportCapabilityMessage.textContent = '无法读取设备 WebGL 尺寸上限；导出将按当前浏览器能力尝试。';
-}
 function greatestCommonDivisor(a, b) {
   while (b) [a, b] = [b, a % b];
   return a;
+}
+
+function actualExportAspect() {
+  const divisor = greatestCommonDivisor(state.width, state.height);
+  return `${state.width / divisor}:${state.height / divisor}`;
+}
+
+function updateExportSummary() {
+  const dimensions = `${state.width} × ${state.height} px`;
+  const background = state.transparent
+    ? (state.preserveShadow ? '透明背景 · 保留阴影' : '透明背景')
+    : '实色背景';
+  const aspect = resolutionAspect.value === 'custom' ? actualExportAspect() : resolutionAspect.value;
+  footerSummary.textContent = `${dimensions} · ${background}`;
+  frameLabel.textContent = `${state.width} × ${state.height} · ${aspect}${state.transparent ? ` · ${background}` : ''}`;
+  updateFramingGuide();
 }
 
 function updateFramingGuide() {
@@ -1409,68 +1686,83 @@ function updateFramingGuide() {
     : shellHeight;
   viewerFrame.style.width = `${Math.max(1, frameWidth)}px`;
   viewerFrame.style.height = `${Math.max(1, frameHeight)}px`;
-  const divisor = greatestCommonDivisor(state.width, state.height);
-  document.querySelector('#frameLabel').textContent =
-    `${state.width} × ${state.height} · ${state.width / divisor}:${state.height / divisor}`;
-  shell.classList.toggle('extreme-frame', outputAspect > 4 || outputAspect < 0.25);
 }
 
-function updateDimensions({ commit = true } = {}) {
-  const requestedWidth = Number(widthInput.value);
-  const requestedHeight = Number(heightInput.value);
-  if (!commit && (
-    !Number.isFinite(requestedWidth) || requestedWidth < 64 || requestedWidth > state.maximumExportDimension ||
-    !Number.isFinite(requestedHeight) || requestedHeight < 64 || requestedHeight > state.maximumExportDimension
-  )) return;
-  const snapshot = exportOptions.setOption('width', requestedWidth);
-  const nextSnapshot = exportOptions.setOption('height', requestedHeight);
-  state.width = snapshot.width;
-  state.height = nextSnapshot.height;
+function updateDimensions({
+  width = widthInput.valueAsNumber,
+  height = heightInput.valueAsNumber,
+  commit = true,
+  aspect,
+  reportCorrection = false,
+} = {}) {
+  if (!commit && ![width, height].every((value) => Number.isInteger(value) && value >= 64 && value <= maximumExportDimension)) return;
+  exportOptions.setOption('width', Number.isFinite(width) ? width : state.width);
+  const next = exportOptions.setOption('height', Number.isFinite(height) ? height : state.height);
+  if (next.width !== state.width || next.height !== state.height) exportDimensionRevision++;
+  state.width = next.width;
+  state.height = next.height;
   if (commit) {
     widthInput.value = state.width;
     heightInput.value = state.height;
+    dimensionFeedback.textContent = reportCorrection && (width !== state.width || height !== state.height)
+      ? `已调整为 ${state.width} × ${state.height} px。每边需填写 64–${maximumExportDimension} 的整数。`
+      : '';
   }
-  exportButton.querySelector('.button-meta').textContent = `${state.width} × ${state.height}`;
-  document.querySelectorAll('[data-size]').forEach((button) => {
-    button.classList.toggle('active', button.dataset.size === `${state.width}x${state.height}`);
-  });
-  updateFramingGuide();
-  document.querySelector('#resetExportWidth').disabled = state.width === 4096;
-  document.querySelector('#resetExportHeight').disabled = state.height === 4096;
+  const customPreset = resolutionPreset.value === 'custom';
+  if (customPreset) {
+    const ratio = aspect && width === state.width && height === state.height ? aspect : actualExportAspect();
+    resolutionAspect.value = [...resolutionAspect.options].some((option) => option.value === ratio) ? ratio : 'custom';
+  }
+  customDimensions.hidden = !customPreset;
+  resetWidth.disabled = state.width === Math.min(4096, maximumExportDimension);
+  resetHeight.disabled = state.height === Math.min(4096, maximumExportDimension);
+  updateExportSummary();
+}
+
+function applyResolutionPreset({ aspectChanged = false } = {}) {
+  const customPreset = resolutionPreset.value === 'custom';
+  if (customPreset && !aspectChanged) {
+    updateDimensions({ width: state.width, height: state.height, aspect: resolutionAspect.value });
+    return;
+  }
+  if (!resolutionAspect.value || resolutionAspect.value === 'custom') resolutionAspect.value = '1:1';
+  const aspect = resolutionAspect.value;
+  const [ratioWidth, ratioHeight] = aspect.split(':').map(Number);
+  const base = customPreset ? Math.max(state.width, state.height) : Number(resolutionPreset.value);
+  const ratio = ratioWidth / ratioHeight;
+  const width = ratio >= 1 ? base : Math.round(base * ratio);
+  const height = ratio >= 1 ? Math.round(base / ratio) : base;
+  updateDimensions({ width, height, aspect, reportCorrection: customPreset });
 }
 
 function applySupportedDrawingBufferSize({ width, height }) {
-  widthInput.value = width;
-  heightInput.value = height;
-  updateDimensions();
+  resolutionPreset.value = 'custom';
+  updateDimensions({ width, height });
 }
 
 [widthInput, heightInput].forEach((input) => {
   input.addEventListener('input', () => updateDimensions({ commit: false }));
-  input.addEventListener('change', () => updateDimensions());
+  input.addEventListener('change', () => updateDimensions({ reportCorrection: true }));
 });
-document.querySelectorAll('[data-size]').forEach((button) => button.addEventListener('click', () => {
-  const [width, height] = button.dataset.size.split('x');
-  widthInput.value = width;
-  heightInput.value = height;
-  updateDimensions();
-}));
-document.querySelector('#resetExportWidth').addEventListener('click', () => { widthInput.value = 4096; updateDimensions(); });
-document.querySelector('#resetExportHeight').addEventListener('click', () => { heightInput.value = 4096; updateDimensions(); });
-applyExportOptions(exportOptions.getSnapshot());
-updateDimensions();
+resolutionPreset.addEventListener('change', () => applyResolutionPreset());
+resolutionAspect.addEventListener('change', () => applyResolutionPreset({ aspectChanged: true }));
+resetWidth.addEventListener('click', () => updateDimensions({ width: 4096, height: state.height }));
+resetHeight.addEventListener('click', () => updateDimensions({ width: state.width, height: 4096 }));
+applyExportOptions();
+applyResolutionPreset();
 new ResizeObserver(updateFramingGuide).observe(shell);
 
-function showMessage(text, type = '') {
-  message.textContent = text;
-  message.className = `message ${type}`;
+function showMessage(text, type = '', target = message) {
+  target.textContent = text;
+  target.classList.toggle('success', type === 'success');
+  target.classList.toggle('error', type === 'error');
 }
 
 let activeExportTask = null;
 let exportAbortController = null;
 
 function exportImage() {
-  if (!state.loaded || state.exporting) return activeExportTask;
+  if (!state.loaded || state.exporting || exportButton.disabled) return activeExportTask;
   exportAbortController = new AbortController();
   activeExportTask = performExportImage(exportAbortController.signal).finally(() => {
     activeExportTask = null;
@@ -1481,73 +1773,105 @@ function exportImage() {
 }
 
 async function performExportImage(signal) {
-  if (!state.loaded || state.exporting) return;
-  updateDimensions();
+  if (widthInput.valueAsNumber !== state.width || heightInput.valueAsNumber !== state.height) {
+    updateDimensions({ reportCorrection: true });
+  }
   const exportPlan = exportOptions.getExportPlan();
+  const { width, height, transparent, preserveShadow, textureDetailMode } = exportPlan;
+  const background = state.background;
+  const modelName = state.selectedModel?.name || 'model';
+  const maximumAnisotropy = state.renderQuality.maximumAnisotropy;
+  const dimensionRevision = exportDimensionRevision;
+  const { theta, phi, radius, fov, verticalShift, buildingCorrection } = state;
+  const cameraFraming = Object.freeze({ theta, phi, radius, fov, verticalShift, buildingCorrection });
+  const useFxaa = exportPlan.antiAlias === 'fxaa';
+  const scaleLabel = useFxaa ? 'FXAA 抗锯齿' : '标准采样';
+
   state.exporting = true;
   shell.classList.add('exporting');
   exportButton.disabled = true;
   exportButton.classList.add('busy');
   exportButton.querySelector('.button-label').textContent = '正在渲染…';
-  const useFxaa = exportPlan.antiAlias === 'fxaa';
-  const scaleLabel = useFxaa ? 'FXAA 抗锯齿' : '标准采样';
-  showMessage(`${state.width} × ${state.height} 图片生成中（${scaleLabel}），请稍候…`);
+  showMessage(`正在生成 ${width} × ${height} PNG…`, '', exportStatus);
 
   try {
+    setPreviewCaptureActive(true);
     const rendered = await renderFixedSizeImage(viewer, {
-      width: exportPlan.width,
-      height: exportPlan.height,
-      background: exportPlan.transparent ? 'transparent' : state.background,
+      width,
+      height,
+      background: transparent ? 'transparent' : background,
       hideEnvironment: true,
-      transparent: exportPlan.transparent,
-      preserveShadow: exportPlan.preserveShadow,
-      textureDetailMode: exportPlan.textureDetailMode,
-      cameraFraming: state,
+      transparent,
+      preserveShadow,
+      textureDetailMode,
+      cameraFraming,
       signal,
     });
+    if (signal.aborted) return;
     const detailLabel = rendered.textureDetail.applied
-      ? `原图优先（${rendered.textureDetail.textureCount} 张纹理，${state.renderQuality.maximumAnisotropy}× 各向异性）`
-      : `自适应 mipmap（${state.renderQuality.maximumAnisotropy}× 各向异性）`;
+      ? `原图优先（${rendered.textureDetail.textureCount} 张纹理，${maximumAnisotropy}× 各向异性）`
+      : `自适应 mipmap（${maximumAnisotropy}× 各向异性）`;
     const blob = await finalizePngExport(rendered.blob, {
-      ...state,
-      ...exportPlan,
+      width,
+      height,
+      transparent,
+      background,
       antiAlias: useFxaa ? 'fxaa' : 'none',
     });
     const dimensions = await readImageDimensions(blob);
-    if (dimensions.width !== state.width || dimensions.height !== state.height) {
+    if (signal.aborted) return;
+    if (dimensions.width !== width || dimensions.height !== height) {
       throw new Error(`SIZE_MISMATCH:${dimensions.width}x${dimensions.height}`);
     }
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
     link.href = url;
-    const safeModelName = (state.selectedModel?.name || 'model')
+    const safeModelName = modelName
       .replace(/[<>:"/\\|?*\u0000-\u001f]/g, '-')
       .replace(/[. ]+$/g, '') || 'model';
-    link.download = `${safeModelName}_${state.width}x${state.height}_${stamp}.png`;
+    link.download = `${safeModelName}_${width}x${height}_${stamp}.png`;
     link.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
-    showMessage(`已导出 ${state.width} × ${state.height} PNG；${scaleLabel}，${detailLabel}。`, 'success');
+    showMessage(`已导出 ${width} × ${height} PNG。 ${scaleLabel}，${detailLabel}。`, 'success', exportStatus);
   } catch (error) {
-    console.error(error);
     const code = error?.code ?? error?.message;
+    const restorationFailed = hasRenderRestorationFailure(error);
+    if (signal.aborted || code === 'RENDER_ABORTED') {
+      if (restorationFailed) throw error;
+      showMessage('', '', exportStatus);
+      return;
+    }
+    console.error(error);
     const mismatch = code === 'RENDER_SIZE_MISMATCH' || String(error?.message).startsWith('SIZE_MISMATCH');
     const detailUnavailable = code === 'TEXTURE_DETAIL_UNAVAILABLE';
     const drawingBufferTooSmall = code === 'RENDER_BUFFER_TOO_SMALL';
-    if (code === 'RENDER_ABORTED') return;
-    if (drawingBufferTooSmall) applySupportedDrawingBufferSize(error.details);
-    showMessage(detailUnavailable
-      ? '当前浏览器无法启用原图优先，请选择“自适应（更稳定）”后重试。'
-      : drawingBufferTooSmall
-        ? `浏览器实际只能绘制 ${state.width} × ${state.height}；已自动填入该尺寸，未生成裁剪图。请再次点击导出。`
-      : mismatch
-        ? '浏览器未能生成精确尺寸，请降低导出尺寸后重试。'
-        : '导出失败。此分辨率可能超过当前设备的 WebGL 或显存上限，请降低尺寸后重试。', 'error');
-    if (hasRenderRestorationFailure(error)) throw error;
+    let feedback = '导出失败。请降低尺寸或检查浏览器的 WebGL 支持，再重试。';
+    if (restorationFailed) {
+      feedback = '取景预览恢复失败，请重新加载模型后再导出。';
+    } else if (detailUnavailable) {
+      feedback = '当前浏览器无法启用原图优先。请在「质量与设备信息」中选择「自适应（更稳定）」后重试。';
+      exportSettings.open = true;
+      document.querySelector('#exportAdvanced').open = true;
+      textureDetailInput.scrollIntoView({ block: 'nearest' });
+    } else if (drawingBufferTooSmall) {
+      const supported = `${error.details.width} × ${error.details.height}`;
+      if (exportDimensionRevision === dimensionRevision) {
+        applySupportedDrawingBufferSize(error.details);
+        feedback = `浏览器实际能绘制 ${supported} px。已填入可用尺寸，请确认后重新导出。`;
+      } else {
+        feedback = `浏览器实际能绘制 ${supported} px。当前尺寸设置已保留，可改用该尺寸后重试。`;
+      }
+    } else if (mismatch) {
+      feedback = `浏览器未能生成本次要求的 ${width} × ${height} px，请降低导出尺寸后重试。`;
+    }
+    showMessage(feedback, 'error', exportStatus);
+    if (restorationFailed) throw error;
   } finally {
     state.exporting = false;
+    setPreviewCaptureActive(false);
     shell.classList.remove('exporting');
-    exportButton.disabled = false;
+    exportButton.disabled = signal.aborted || !state.loaded;
     exportButton.classList.remove('busy');
     exportButton.querySelector('.button-label').textContent = '导出 PNG';
   }
@@ -1786,7 +2110,6 @@ document.querySelector('#sequenceRetry').addEventListener('click', () => {
 });
 document.querySelector('#sequenceRetryFrame').addEventListener('click', () => sequenceViewer.retryFailed());
 document.querySelector('#sequenceReset').addEventListener('click', () => sequenceViewer.reset());
-document.querySelector('#sequencePanelReset').addEventListener('click', () => sequenceViewer.reset());
 document.querySelector('#sequenceDownload').addEventListener('click', downloadSequenceFrame);
 
 renderModelLibrary();

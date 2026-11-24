@@ -1,0 +1,310 @@
+#renderStudio {
+  --studio-detail: var(--panel-muted);
+}
+
+#renderStudio .studio-help,
+#renderStudio .studio-action-status {
+  display: block;
+  margin: 0;
+  color: var(--studio-detail);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+#renderStudio .studio-area-heading {
+  gap: 5px;
+  margin-bottom: 12px;
+}
+
+#renderStudio .studio-switch-row {
+  min-height: 44px;
+  cursor: pointer;
+}
+
+#renderStudio .studio-switch-row .switch-control {
+  display: inline-flex;
+}
+
+#renderStudio .studio-tone-mapping {
+  margin: 0;
+  padding: 14px 0 0;
+  border-top: 1px solid var(--parameter-rule);
+  border-bottom: 0;
+}
+
+#renderStudio .post-section .ssao-tuning {
+  gap: 7px;
+  margin: 0 0 12px;
+}
+
+#renderStudio .post-section .ssao-tuning label {
+  color: var(--studio-detail);
+  font-size: 12px;
+}
+
+#renderStudio :is(.studio-area-heading h3, .parameter-group-heading strong, .ssao-tuning output) {
+  color: var(--parameter-accent);
+}
+
+#renderStudio :is(.studio-range, .ssao-tuning) input[type="range"] {
+  accent-color: var(--parameter-accent);
+}
+
+#renderStudio .studio-action-scope,
+#renderStudio .studio-action-status:not(:empty) {
+  margin-top: 8px;
+}
+
+#renderStudio .studio-action-status.success { color: var(--panel-accent); }
+#renderStudio .studio-action-status.error { color: var(--panel-alert); }
+
+#renderStudio .studio-reset-feedback {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+#renderStudio .studio-reset-feedback:has(p:empty) { display: none; }
+#renderStudio .studio-reset-feedback .studio-action-status { margin: 0; }
+#renderStudio .studio-reset-feedback button { width: auto; flex: 0 0 auto; }
+
+#renderStudio .studio-confirmation {
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid var(--parameter-rule);
+  border-radius: 8px;
+  background: var(--parameter-control);
+}
+
+#renderStudio .studio-range-heading,
+#renderStudio .parameter-group-heading small,
+#renderStudio .collapsible-parameter-group summary,
+#renderStudio .advanced-material summary,
+#renderStudio .collapsible-parameter-group summary small,
+#renderStudio .advanced-material summary small,
+#renderStudio .environment-picker-toggle small {
+  color: var(--studio-detail);
+}
+
+#renderStudio :is([data-adjusted-count], .environment-picker-toggle small, .environment-dialog-heading small, .ssao-tuning output) {
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+#renderStudio [data-adjusted-count] { white-space: nowrap; }
+#renderStudio .advanced-material summary small { margin-inline-start: 4px; }
+#renderStudio :is(.collapsible-parameter-group, .advanced-material) summary { font-size: 13px; }
+
+#renderStudio .collapsible-parameter-group,
+#renderStudio .collapsible-parameter-group[open] summary,
+#renderStudio .advanced-material,
+#renderStudio .advanced-material[open] summary {
+  border-color: var(--parameter-rule);
+}
+
+#renderStudio .studio-range-heading > span {
+  border-color: var(--panel-control-border);
+  background: var(--parameter-control);
+}
+
+#renderStudio .studio-range-heading input {
+  color: var(--panel-control-ink);
+}
+
+#renderStudio :is(.environment-current, .appearance-variant-toggle) {
+  border-color: var(--panel-control-border);
+  color: var(--panel-control-ink);
+  background: var(--parameter-control);
+}
+
+#renderStudio :is(.environment-current i, .appearance-variant-toggle i, .appearance-variant-label strong) {
+  color: var(--parameter-accent);
+}
+
+#renderStudio .environment-current strong { font-size: 12px; line-height: 1.35; }
+#renderStudio .environment-current .environment-placeholder { padding: 6px 8px; }
+
+#renderStudio .environment-card > .environment-card-preview { margin: 0; }
+#renderStudio .environment-card > span:not(.environment-card-preview) { font-size: 12px; }
+#renderStudio .environment-card.loading::after { font-size: 12px; }
+
+#renderStudio .environment-card .environment-placeholder {
+  display: grid;
+  aspect-ratio: 2 / 1;
+  place-items: center;
+  margin: 0;
+  color: var(--studio-detail);
+  background: var(--parameter-surface);
+  font-size: 13px;
+}
+
+#renderStudio :is(.environment-dialog, .appearance-variant-popover) {
+  border-color: var(--parameter-rule);
+  color: var(--panel-control-ink);
+  background: var(--parameter-surface);
+}
+
+#renderStudio :is(.environment-dialog-heading, .appearance-variant-section) {
+  border-color: var(--parameter-rule);
+}
+
+#renderStudio .appearance-variant-section {
+  background: var(--parameter-control);
+}
+
+#renderStudio :is(.environment-dialog-heading button, .environment-card, .appearance-variant-popover input, .appearance-variant-options button) {
+  border-color: var(--panel-control-border);
+  color: var(--panel-control-ink);
+  background: var(--parameter-control);
+}
+
+#renderStudio .environment-dialog-heading button { width: 44px; height: 44px; flex: 0 0 44px; }
+
+#renderStudio :is(.environment-dialog-heading, .appearance-variant-section) small,
+#renderStudio :is(.appearance-variant-empty, .appearance-variant-popover label) {
+  color: var(--studio-detail);
+}
+
+#renderStudio .appearance-variant-popover input:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+#renderStudio :is(.environment-card, .appearance-variant-options button):hover {
+  border-color: var(--parameter-accent);
+}
+
+#renderStudio :is(.environment-card[aria-pressed="true"], .appearance-variant-options button[aria-selected="true"]) {
+  border-color: var(--parameter-accent);
+  background: color-mix(in srgb, var(--parameter-accent) 13%, var(--panel-base));
+}
+
+#renderStudio .environment-card.error { border-color: var(--panel-alert); }
+#renderStudio .appearance-variant-options button > i { color: var(--parameter-accent); }
+
+#renderStudio .danger-button {
+  border-color: color-mix(in srgb, var(--panel-alert) 65%, var(--parameter-surface));
+  color: var(--panel-alert);
+  background: transparent;
+}
+
+#renderStudio .danger-button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--panel-alert) 10%, var(--parameter-surface));
+}
+
+#renderStudio .material-picker { margin-bottom: 8px; }
+#renderStudio .studio-material-scope { margin-bottom: 6px; }
+#renderStudio .material-full-name { color: var(--studio-detail); }
+#renderStudio #materialDoubleSidedHelp { margin-bottom: 12px; }
+
+#renderStudio .material-color-control {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  padding: 5px 3px 5px 7px;
+  border: 1px solid var(--panel-control-border);
+  border-radius: 7px;
+  color: var(--studio-detail);
+  background: var(--parameter-control);
+  font-size: 12px;
+}
+
+#renderStudio .material-color-control > span {
+  display: flex;
+  align-items: center;
+}
+
+#renderStudio .material-color-control > label {
+  display: inline;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  font: inherit;
+}
+
+#renderStudio .studio-range-heading > span:has(input:focus-visible),
+#renderStudio .texture-channels summary:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+#renderStudio .studio-range-heading .parameter-reset:focus-visible {
+  outline-offset: -2px;
+}
+
+#renderStudio .texture-channels {
+  margin: 16px 0 0;
+  border-top: 1px solid var(--parameter-rule);
+}
+
+#renderStudio .texture-channels summary {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  gap: 8px;
+  color: inherit;
+  cursor: pointer;
+  font-size: 13px;
+  list-style: none;
+}
+
+#renderStudio .texture-channels summary::-webkit-details-marker { display: none; }
+
+#renderStudio .texture-channels summary::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-right: 1px solid currentColor;
+  border-bottom: 1px solid currentColor;
+  transform: rotate(-45deg);
+}
+
+#renderStudio .texture-channels[open] summary::before { transform: translateY(-2px) rotate(45deg); }
+#renderStudio #materialTextureCount { margin-left: auto; }
+#renderStudio .texture-scope { margin-bottom: 6px; }
+
+#renderStudio .texture-grid {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+}
+
+#renderStudio .texture-card {
+  display: grid;
+  grid-template-columns: 70px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  border: 0;
+  border-top: 1px solid var(--parameter-rule);
+  border-radius: 0;
+  background: transparent;
+}
+
+#renderStudio .texture-card.empty { display: block; }
+#renderStudio .texture-card.empty .texture-meta { grid-template-columns: minmax(0, 1fr) max-content; }
+#renderStudio .texture-card.empty .texture-description { grid-column: 1 / -1; }
+
+#renderStudio .texture-preview {
+  border-radius: 5px;
+  color: #c2cbc6;
+  text-align: center;
+}
+
+#renderStudio .texture-preview img { object-fit: contain; }
+#renderStudio .texture-meta { min-width: 0; gap: 2px 8px; padding: 0; }
+#renderStudio .texture-meta strong { color: inherit; font-size: 12px; }
+#renderStudio .texture-meta small { color: var(--studio-detail); font-size: 11px; }
+
+@media (any-pointer: coarse) {
+  #renderStudio .material-colors { grid-template-columns: repeat(auto-fit, minmax(min(100%, 154px), 1fr)); }
+  #renderStudio .material-color-control input[type="color"] { width: 44px; height: 44px; }
+  #renderStudio .ssao-tuning input[type="range"] { min-height: 44px; }
+}
+
+@media (max-width: 360px) {
+  #renderStudio .material-colors { grid-template-columns: minmax(0, 1fr); }
+}

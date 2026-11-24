@@ -20,6 +20,11 @@ assert.throws(() => resolveExportScale({ width: 0, height: 1 }), /INVALID_EXPORT
 
 const values = new Map();
 const storage = { getItem: (key) => values.get(key) ?? null, setItem: (key, value) => values.set(key, value) };
+assert.equal(loadExportQuality(storage), ExportQualityMode.HIGH);
+values.set(EXPORT_QUALITY_STORAGE_KEY, 'invalid');
+assert.equal(loadExportQuality(storage), ExportQualityMode.HIGH);
+assert.equal(loadExportQuality({ getItem() { throw new Error('storage unavailable'); } }), ExportQualityMode.HIGH);
+assert.equal(saveExportQuality(ExportQualityMode.STANDARD, storage), ExportQualityMode.STANDARD);
 assert.equal(loadExportQuality(storage), ExportQualityMode.STANDARD);
 assert.equal(saveExportQuality(ExportQualityMode.HIGH, storage), ExportQualityMode.HIGH);
 assert.equal(values.get(EXPORT_QUALITY_STORAGE_KEY), ExportQualityMode.HIGH);

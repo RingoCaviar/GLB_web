@@ -156,10 +156,12 @@ export async function renderFixedSizeImage(viewer, {
   const clearTimer = runtime.clearTimer ?? globalThis.clearTimeout;
   let failure = null;
   let cameraFramingSession = null;
+  let previewEffectsPause = null;
   activeRenders.add(viewer);
 
   try {
     throwIfAborted(signal);
+    previewEffectsPause = runtime.beginPreviewEffectsPause?.(viewer) ?? null;
     if (cameraFraming) {
       cameraFramingSession = runtime.createCameraFramingSession(viewer, cameraFraming);
       if (!cameraFramingSession?.apply || !cameraFramingSession?.restore) {
@@ -263,6 +265,13 @@ export async function renderFixedSizeImage(viewer, {
           Promise.resolve(cameraFramingSession.restore()),
           { timeoutMs, setTimer, clearTimer },
         );
+      } catch (error) {
+        restorationErrors.push(error);
+      }
+    }
+    if (previewEffectsPause?.restore) {
+      try {
+        await previewEffectsPause.restore();
       } catch (error) {
         restorationErrors.push(error);
       }

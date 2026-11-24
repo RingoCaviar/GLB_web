@@ -2,6 +2,7 @@ import { beginExportTextureDetail } from './render-quality.js';
 import { $renderer } from '@google/model-viewer/lib/model-viewer-base.js';
 import { applyViewerCameraFraming } from './camera-framing-application.js';
 import { applyVerticalLensShift } from './vertical-lens-shift.js';
+import { pauseRealtimePostprocessing } from './realtime-postprocessing.js';
 import {
   FixedSizeRenderError,
   hasRenderRestorationFailure,
@@ -13,6 +14,7 @@ export { FixedSizeRenderError, hasRenderRestorationFailure };
 export function renderFixedSizeImage(viewer, options) {
   return renderFixedSizeImageCore(viewer, options, {
     beginTextureDetail: beginExportTextureDetail,
+    beginPreviewEffectsPause: pauseRealtimePostprocessing,
     createCameraFramingSession(target, framing) {
       return {
         async apply(dimensions) {

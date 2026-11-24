@@ -9,13 +9,16 @@ from pathlib import Path
 import bpy
 import bpy.utils.previews
 from bpy.app.handlers import persistent
-from bpy.props import BoolProperty, EnumProperty, IntProperty, PointerProperty, StringProperty
+from bpy.props import BoolProperty, CollectionProperty, EnumProperty, IntProperty, PointerProperty, StringProperty
 from bpy.types import Operator, Panel, PropertyGroup
 
-from .camera_ui import CAMERA_CLASSES, clear_inspection, draw_inspection, draw_rig
+from .camera_ui import CAMERA_CLASSES, change_motion_mode, change_product, clear_inspection, draw_inspection, draw_rig
 from .jobs import start_job
-from .rig import clear_view_state
-from .sequence import DEFAULT_ANGLES, DEFAULT_FRAMES, MAX_ANGLES, parse_angles
+from .rig import clear_cycles_cameras, clear_view_state, restore_cycles_camera, sync_cycles_cameras
+from .sequence import DEFAULT_ANGLES, DEFAULT_FRAMES, MAX_ANGLES, format_angle, parse_angles, select_pose
+from .sequence_help import GLB_ORBIT_OT_sequence_help, MOTION_LABELS, draw_notes
+from .turntable import clear_saved_turntables
+from .viewport_preview import end_object_preview, watch_object_preview
 
 
 @dataclass
@@ -92,27 +95,56 @@ def cleanup_on_exit():
 
 
 @persistent
+def stop_preview(_):
+    if end_object_preview():
+        clear_inspection()
+    clear_cycles_cameras()
+
+
+@persistent
+def recover_preview(_):
+    clear_saved_turntables()
+    clear_cycles_cameras()
+
+
+@persistent
+def restore_camera_for_render(scene):
+    restore_cycles_camera(scene)
+
+
+@persistent
 def reset_on_load(_):
     if bpy.app.timers.is_registered(poll_job):
         bpy.app.timers.unregister(poll_job)
     cleanup_on_exit()
+    stop_preview(None)
     clear_view_state()
     clear_inspection()
     _previews.clear()
 
 
+class GLBOrbitFraming(PropertyGroup):
+    framing_source: PointerProperty(type=bpy.types.Object)
+    rig_camera: PointerProperty(type=bpy.types.Object)
+    rig_target: PointerProperty(type=bpy.types.Object)
+    confirmed_framing: StringProperty()
+    reframing: BoolProperty(default=False)
+
+
 class GLBOrbitSettings(PropertyGroup):
     target: PointerProperty(
         name="拍摄对象", type=bpy.types.Object,
-        description="使用此物体及其可渲染子级自动取景。留空时使用当前选中的活动物体",
+        description="切换到此产品的取景相机。添加相机时留空可使用当前选中的活动物体",
+        update=change_product,
     )
     motion_mode: EnumProperty(
         name="拍摄方式",
         items=(
-            ("CAMERA", "转相机", "产品和灯光留在原位，相机围绕目标点移动"),
-            ("OBJECT", "转物体", "每组俯角固定相机方位，产品围绕目标点转动，摄影棚灯光留在原位"),
+            ("CAMERA", MOTION_LABELS["CAMERA"], "产品和灯光留在原位，相机围绕目标点移动"),
+            ("OBJECT", MOTION_LABELS["OBJECT"], "每组俯角固定相机方位，产品围绕目标点转动，摄影棚灯光留在原位"),
         ),
         default="CAMERA",
+        update=change_motion_mode,
     )
     angles: StringProperty(
         name="俯角（°）", default=DEFAULT_ANGLES,
@@ -131,11 +163,14 @@ class GLBOrbitSettings(PropertyGroup):
     )
     width: IntProperty(name="宽", default=1200, min=16, max=8192, soft_max=4096)
     height: IntProperty(name="高", default=1200, min=16, max=8192, soft_max=4096)
+    framings: CollectionProperty(type=GLBOrbitFraming)
+    preview_camera: PointerProperty(type=bpy.types.Object)
+    # The original single-product setup is also readable in older .blend files.
+    framing_source: PointerProperty(type=bpy.types.Object)
     rig_camera: PointerProperty(type=bpy.types.Object)
     rig_target: PointerProperty(type=bpy.types.Object)
-    preview_camera: PointerProperty(type=bpy.types.Object)
-    framing_source: PointerProperty(type=bpy.types.Object)
     confirmed_framing: StringProperty()
+    reframing: BoolProperty(default=False)
     inspect_angle_index: IntProperty(default=0, min=0, max=MAX_ANGLES - 1)
     inspect_frame_number: IntProperty(default=1, min=1, max=720)
 
@@ -157,6 +192,43 @@ class GLB_ORBIT_OT_render_sequence(Operator):
     @classmethod
     def poll(cls, context):
         return context.scene is not None and _active_job is None
+
+    def invoke(self, context, _event):
+        title = "渲染此帧" if self.preview else "渲染完整序列"
+        confirm = "渲染预览" if self.preview else "开始渲染"
+        return context.window_manager.invoke_props_dialog(self, width=380, title=title, confirm_text=confirm)
+
+    def draw(self, context):
+        settings = context.scene.glb_orbit_export
+        mode = MOTION_LABELS[settings.motion_mode]
+        try:
+            angles = parse_angles(settings.angles)
+            if self.preview:
+                pitch, frame = select_pose(angles, settings.frame_count, self.angle_index, self.frame_number)
+                summary = f"{mode} · 俯角 {format_angle(pitch)}° · 第 {frame} 帧"
+            else:
+                summary = f"{mode} · {len(angles)} 个俯角 × {settings.frame_count} 帧 = {len(angles) * settings.frame_count} 帧"
+        except ValueError:
+            self.layout.label(text="请检查序列设置。", icon="ERROR")
+            return
+
+        self.layout.label(text=summary)
+        self.layout.separator()
+        if self.preview:
+            draw_notes(
+                self.layout,
+                "使用场景的灯光、材质和合成设置渲染一张。",
+                "预览最长边 640 像素，结果显示在插件面板。",
+            )
+        else:
+            draw_notes(
+                self.layout,
+                f"以 {settings.width} × {settings.height} 输出 PNG。",
+                "保存目录下会创建以产品名称命名的文件夹。",
+                "后台渲染，可在面板查看进度或取消。",
+            )
+            if not settings.product_name.strip() or not settings.output_directory.strip():
+                self.layout.label(text="请先在「输出」中填写产品名称和保存目录。", icon="INFO")
 
     def execute(self, context):
         global _active_job, _last_result
@@ -213,8 +285,15 @@ class GLB_ORBIT_PT_sequence(Panel):
         ready = draw_rig(fields.box(), context, settings)
 
         capture = fields.box()
-        capture.label(text="序列设置", icon="RENDER_ANIMATION")
-        capture.row(align=True).prop(settings, "motion_mode", text="", expand=True)
+        header = capture.row()
+        header.operator_context = "INVOKE_DEFAULT"
+        header.label(text="序列设置", icon="RENDER_ANIMATION")
+        help_button = header.row()
+        help_button.alignment = "RIGHT"
+        help_button.operator(GLB_ORBIT_OT_sequence_help.bl_idname, text="", icon="QUESTION")
+        modes = capture.row(align=True)
+        for mode, label in MOTION_LABELS.items():
+            modes.prop_enum(settings, "motion_mode", mode, text=label)
         controls = capture.column(align=True)
         controls.use_property_split = True
         controls.prop(settings, "angles")
@@ -246,6 +325,7 @@ class GLB_ORBIT_PT_sequence(Panel):
 
         layout.separator()
         primary = layout.row(align=True)
+        primary.operator_context = "INVOKE_DEFAULT"
         primary.enabled = ready and bool(angles)
         primary.scale_y = 1.35
         primary.operator(GLB_ORBIT_OT_render_sequence.bl_idname, text="渲染完整序列", icon="RENDER_ANIMATION").preview = False
@@ -282,7 +362,20 @@ class GLB_ORBIT_PT_sequence(Panel):
             box.operator("wm.path_open", text="打开产品目录", icon="FILE_FOLDER").filepath = str(result.path)
 
 
-CLASSES = (GLBOrbitSettings, *CAMERA_CLASSES, GLB_ORBIT_OT_render_sequence, GLB_ORBIT_OT_cancel, GLB_ORBIT_PT_sequence)
+CLASSES = (
+    GLBOrbitFraming, GLBOrbitSettings, *CAMERA_CLASSES, GLB_ORBIT_OT_sequence_help,
+    GLB_ORBIT_OT_render_sequence, GLB_ORBIT_OT_cancel, GLB_ORBIT_PT_sequence,
+)
+HANDLERS = (
+    (bpy.app.handlers.load_pre, reset_on_load),
+    (bpy.app.handlers.save_pre, stop_preview),
+    (bpy.app.handlers.undo_pre, stop_preview),
+    (bpy.app.handlers.redo_pre, stop_preview),
+    (bpy.app.handlers.render_init, restore_camera_for_render),
+    (bpy.app.handlers.load_post, recover_preview),
+    (bpy.app.handlers.undo_post, recover_preview),
+    (bpy.app.handlers.redo_post, recover_preview),
+)
 
 
 def register():
@@ -291,14 +384,20 @@ def register():
         bpy.utils.register_class(cls)
     bpy.types.Scene.glb_orbit_export = PointerProperty(type=GLBOrbitSettings)
     _previews = bpy.utils.previews.new()
-    bpy.app.handlers.load_pre.append(reset_on_load)
+    for handlers, callback in HANDLERS:
+        handlers.append(callback)
+    bpy.app.timers.register(clear_saved_turntables)
     atexit.register(cleanup_on_exit)
 
 
 def unregister():
     global _previews
     atexit.unregister(cleanup_on_exit)
-    bpy.app.handlers.load_pre.remove(reset_on_load)
+    for handlers, callback in HANDLERS:
+        handlers.remove(callback)
+    for timer in (clear_saved_turntables, watch_object_preview, sync_cycles_cameras):
+        if bpy.app.timers.is_registered(timer):
+            bpy.app.timers.unregister(timer)
     reset_on_load(None)
     bpy.utils.previews.remove(_previews)
     _previews = None

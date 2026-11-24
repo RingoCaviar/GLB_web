@@ -1,8 +1,8 @@
 import {
+  DEFAULT_EXPORT_QUALITY,
   ExportQualityMode,
   loadExportQuality,
   saveExportQuality,
-  sanitizeExportQuality,
 } from './export-quality.js';
 
 export const DEFAULT_EXPORT_OPTIONS = Object.freeze({
@@ -10,7 +10,7 @@ export const DEFAULT_EXPORT_OPTIONS = Object.freeze({
   height: 4096,
   transparent: false,
   preserveShadow: false,
-  exportQuality: ExportQualityMode.STANDARD,
+  exportQuality: DEFAULT_EXPORT_QUALITY,
   textureDetailMode: 'adaptive',
 });
 
@@ -64,7 +64,7 @@ export class ExportOptions {
   setOption(name, value) {
     if (name === 'width' || name === 'height') this.options[name] = clampDimension(value, this.maximumDimension);
     else if (name === 'exportQuality') {
-      this.options.exportQuality = saveExportQuality(sanitizeExportQuality(value), this.storage);
+      this.options.exportQuality = saveExportQuality(value, this.storage);
       this.options.textureDetailMode = this.options.exportQuality === ExportQualityMode.HIGH ? 'base-level' : 'adaptive';
     } else if (name === 'textureDetailMode') {
       this.options.textureDetailMode = saveTextureDetail(value === 'base-level' ? 'base-level' : 'adaptive', this.storage);
@@ -88,7 +88,7 @@ export class ExportOptions {
     return Object.freeze({
       ...snapshot,
       background: snapshot.transparent ? 'transparent' : undefined,
-      antiAlias: snapshot.exportQuality === ExportQualityMode.HIGH ? 'fxaa' : 'none',
+      antiAlias: !snapshot.transparent && snapshot.exportQuality === ExportQualityMode.HIGH ? 'fxaa' : 'none',
     });
   }
 }

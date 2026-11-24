@@ -1,16 +1,22 @@
-import { readFile, rm } from 'node:fs/promises';
+import { readFile, rm, writeFile } from 'node:fs/promises';
 import { networkInterfaces } from 'node:os';
 import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 const [
-  port = '5173',
+  portArgument = '5173',
   outputLog = '.glb-viewer-output.log',
   errorLog = '.glb-viewer-error.log',
   pidFile = '.glb-viewer.pid',
+  stopRequestFile = '.glb-viewer-stop-requested',
 ] = process.argv.slice(2);
+const port = Number(portArgument);
+if (!/^\d{1,5}$/.test(portArgument) || port < 1 || port > 65535) {
+  throw new Error('服务端口必须是 1 到 65535 之间的整数。');
+}
 const projectRoot = resolve(import.meta.dirname, '..');
 const pidPath = resolve(projectRoot, pidFile);
+const stopRequestPath = resolve(projectRoot, stopRequestFile);
 const startHelper = resolve(projectRoot, 'scripts/start-vite.mjs');
 const wait = (milliseconds) => new Promise((resolveWait) => setTimeout(resolveWait, milliseconds));
 
@@ -48,6 +54,25 @@ async function waitForPort(expectedPid = null, timeout = 6000) {
   return false;
 }
 
+function stopAsAdministrator(pid) {
+  const helper = resolve(projectRoot, 'scripts/stop-vite-tree.ps1').replaceAll("'", "''");
+  const script = `
+    try {
+      $arguments = @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', ('"{0}"' -f '${helper}'), '-Port', '${port}', '-TargetPid', '${pid}')
+      $child = Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -ArgumentList $arguments -Verb RunAs -WindowStyle Hidden -Wait -PassThru -ErrorAction Stop
+      exit $child.ExitCode
+    } catch {
+      if ($_.Exception.GetBaseException().NativeErrorCode -eq 1223) { exit 2 }
+      exit 1
+    }
+  `;
+  console.log('普通权限无法停止当前服务，正在请求管理员权限……');
+  const result = spawnSync('powershell.exe', [
+    '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64'),
+  ], { stdio: 'ignore', windowsHide: true });
+  return result.status;
+}
+
 function printAddresses() {
   console.log(`\n本机访问：http://localhost:${port}/`);
   for (const entries of Object.values(networkInterfaces())) {
@@ -66,12 +91,20 @@ if (listener !== null) {
     throw new Error(`端口 ${port} 正被未识别进程占用（PID ${listener}），为避免误杀已取消重启。`);
   }
   console.log(`正在停止当前服务（PID ${listener}）……`);
+  // The scheduled runner consumes this after Vite exits so Windows does not retry it.
+  await writeFile(stopRequestPath, 'stop\r\n', 'ascii');
   const stopped = spawnSync('taskkill.exe', ['/PID', String(listener), '/T', '/F'], {
-    encoding: 'utf8',
+    stdio: 'ignore',
     windowsHide: true,
   });
-  if (stopped.status !== 0 && listeningPid() !== null) {
-    throw new Error(`无法停止当前服务：${stopped.stderr.trim() || stopped.stdout.trim()}`);
+  if (stopped.status !== 0 && listeningPid() === listener) {
+    const elevated = stopAsAdministrator(listener);
+    if (elevated !== 0 && listeningPid() === listener) {
+      await rm(stopRequestPath, { force: true });
+      if (elevated === 2) throw new Error('已取消管理员授权，服务仍在运行。');
+      if (elevated === 3) throw new Error(`无法确认 PID ${listener} 属于当前项目，已取消重启。`);
+      throw new Error(`无法停止服务（PID ${listener}），请确认管理员授权并重试。`);
+    }
   }
   if (!await waitForPort()) throw new Error(`旧服务未能释放端口 ${port}。`);
 } else {
@@ -79,8 +112,8 @@ if (listener !== null) {
 }
 
 await rm(pidPath, { force: true });
-console.log('正在检查 360° 预览资源并重新启动服务……');
-const started = spawnSync(process.execPath, [startHelper, port, outputLog, errorLog, pidFile], {
+console.log('正在启动服务……');
+const started = spawnSync(process.execPath, [startHelper, String(port), outputLog, errorLog, pidFile], {
   cwd: projectRoot,
   encoding: 'utf8',
   windowsHide: true,

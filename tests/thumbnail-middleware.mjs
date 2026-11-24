@@ -2,8 +2,10 @@ import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createServer } from 'node:http';
 import {
   decodeThumbnail,
+  createThumbnailMiddleware,
   hasValidOrigin,
   isLocalRequest,
   localAddresses,
@@ -50,8 +52,35 @@ try {
     await assert.rejects(resolveModelTarget(modelsRoot, invalid));
   }
   await assert.rejects(resolveModelTarget(modelsRoot, '中文 文件夹/不存在.glb'));
+
+  const middleware = createThumbnailMiddleware(root);
+  const server = createServer((request, response) => {
+    Object.defineProperty(request.socket, 'remoteAddress', { value: '192.168.1.99' });
+    middleware(request, response, () => { response.statusCode = 404; response.end(); });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const capability = await fetch(`${base}/__thumbnail/capability`);
+    assert.deepEqual(await capability.json(), { writable: true });
+    const save = await fetch(`${base}/__thumbnail/save`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: base },
+      body: JSON.stringify({ modelId: '中文 文件夹/子目录/模型.glb', dataUrl: `data:image/webp;base64,${image.toString('base64')}` }),
+    });
+    assert.equal(save.status, 200, '局域网访问者应能生成模型封面');
+    assert.deepEqual(await fs.readFile(target.thumbnailPath), image);
+    const rejected = await fetch(`${base}/__thumbnail/save`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: 'http://attacker.test' },
+      body: JSON.stringify({ modelId: '中文 文件夹/子目录/模型.glb', dataUrl: `data:image/webp;base64,${image.toString('base64')}` }),
+    });
+    assert.equal(rejected.status, 403, '跨来源写入仍应拒绝');
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
 } finally {
   await fs.rm(root, { recursive: true, force: true });
 }
 
-console.log('缩略图中间件盲测通过：WebP 尺寸、路径边界、本机地址和 Origin 校验均符合预期。');
+console.log('缩略图中间件测试通过：局域网写入、WebP 尺寸、路径边界和 Origin 校验均符合预期。');

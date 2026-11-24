@@ -1,6 +1,10 @@
 import { saveDefaultLighting } from './lighting-defaults.js';
 import environmentPresetList from './environment-presets.generated.js';
 import {
+  applyRealtimePostprocessing, applyRealtimeToneMapping,
+  loadRealtimePostprocessing, saveRealtimePostprocessing,
+} from './realtime-postprocessing.js';
+import {
   clearStudioState, DEFAULT_LIGHTING, loadStudioState, resolveModelAppearance,
   sanitizeLighting, saveStudioState, STUDIO_STATE_VERSION, STUDIO_STORAGE_PREFIX,
 } from './model-appearance.js';
@@ -9,10 +13,15 @@ import {
   resetStudioParameter, studioNumericParameters, studioParameters, visibleStudioParameters,
 } from './render-studio-parameters.js';
 import { createCoalescedWriter } from './coalesced-writer.js';
+import { appearanceVariantTemplate } from './appearance-variants.js';
 
 export { clearStudioState, DEFAULT_LIGHTING, loadStudioState, sanitizeLighting, saveStudioState, STUDIO_STATE_VERSION, STUDIO_STORAGE_PREFIX };
 
 export const ENVIRONMENT_PRESETS = Object.freeze(Object.fromEntries(environmentPresetList.map(({ key, ...preset }) => [key, Object.freeze(preset)])));
+
+function environmentThumbnail(preset) {
+  return `<img src="${preset.thumbnailUrl}" alt="" width="320">`;
+}
 
 const clamp = (value, min, max, fallback) => {
   const number = Number(value);
@@ -126,7 +135,7 @@ export function applyLighting(viewer, lighting) {
   viewer.exposure = safe.exposure;
   viewer.shadowIntensity = safe.shadowIntensity;
   viewer.shadowSoftness = safe.shadowSoftness;
-  viewer.toneMapping = safe.toneMapping;
+  applyRealtimeToneMapping(viewer, safe.toneMapping);
   applyEnvironmentRotation(viewer, safe);
   return safe;
 }
@@ -160,34 +169,146 @@ export function applyEnvironmentRotation(viewer, rotation = {}) {
 }
 
 export function studioPanelTemplate() {
-  return `<section class="panel-section studio-section" id="renderStudio">
-    <div class="section-heading"><span>04</span><h2>渲染工作室</h2></div>
-    <section class="studio-area" aria-labelledby="lightingAreaTitle"><div class="studio-area-heading"><h3 id="lightingAreaTitle">环境与光照</h3><small>设置场景氛围与画面表现</small></div>
-      <div class="studio-subheading">环境</div>
-      <div class="environment-picker"><button class="environment-picker-toggle" id="environmentPickerToggle" type="button" aria-haspopup="dialog"><span><strong>HDRI 环境</strong><small id="environmentStatus">项目内置 HDR</small></span><span class="environment-current" id="environmentCurrent"></span></button><dialog class="environment-dialog" id="environmentDialog"><div class="environment-dialog-heading"><div><strong>选择 HDRI 环境</strong><small>完整预览环境全景 · 点击立即应用</small></div><button id="environmentDialogClose" type="button" aria-label="关闭 HDRI 选择窗口">×</button></div><div class="environment-grid" id="environmentPresetGrid">${Object.entries(ENVIRONMENT_PRESETS).map(([key, item]) => `<button class="environment-card" type="button" data-environment-preset="${key}" aria-pressed="false"><span class="environment-card-preview"><img src="${item.thumbnailUrl}" alt="${key === 'neutral' ? '无 HDRI' : `${item.label} HDRI 全景预览`}" width="320">${key === 'neutral' ? '<i>无 HDRI</i>' : ''}</span><span>${item.label}</span><small>点击应用</small></button>`).join('')}</div></dialog></div>
-      <label class="switch-row compact-switch"><span><strong>HDRI 去色</strong><small>保留明暗，减少环境色偏</small></span><input id="environmentDesaturate" type="checkbox" checked><i></i></label>
-      <label class="switch-row compact-switch"><span><strong>显示环境背景</strong><small>仅影响预览，不进入 PNG</small></span><input id="environmentPreview" type="checkbox" checked><i></i></label>
-      <section class="parameter-group"><div class="parameter-group-heading"><strong>照明</strong><small data-adjusted-count="lighting">已调整 0 项</small></div><div id="lightingControls"></div></section>
-      <details class="parameter-group collapsible-parameter-group"><summary>环境方向 <small data-adjusted-count="rotation">已调整 0 项</small></summary><div id="environmentRotationControl"></div></details>
-      <div class="studio-subheading">画面处理</div>
-      <label class="select-row"><span><strong>色调映射</strong><small>调整高光与整体明暗表现</small></span><select id="toneMapping"><option value="neutral">Neutral</option><option value="aces">ACES</option><option value="agx">AgX</option><option value="commerce">Commerce</option></select></label>
-      <div class="studio-actions lighting-actions"><button class="secondary-button" id="resetLighting" type="button">重置环境与光照</button><button class="secondary-button" id="saveDefaultLighting" type="button" disabled>保存为默认</button></div>
+  return `<div id="renderStudio">
+    <section class="settings-category-panel" id="settings-category-post" data-settings-category-panel="post" aria-labelledby="settings-toggle-post" hidden inert>
+      <div class="settings-category-panel-inner">
+        <section class="panel-section studio-section post-section" aria-label="后处理参数">
+          <section class="studio-area" aria-labelledby="previewEffectsTitle">
+            <div class="studio-area-heading">
+              <h3 id="previewEffectsTitle">实时预览效果</h3>
+              <p class="studio-help" id="previewEffectsScope">SMAA 和 SSAO 仅用于预览。PNG 抗锯齿由导出质量决定。</p>
+            </div>
+            <label class="switch-row compact-switch studio-switch-row">
+              <span><strong>SMAA 抗锯齿</strong><span class="studio-help" id="realtimeSmaaHelp">平滑模型轮廓与斜线</span></span>
+              <span class="switch-control"><input id="realtimeSmaa" type="checkbox" role="switch" aria-label="SMAA 抗锯齿" aria-describedby="realtimeSmaaHelp previewEffectsScope" checked><i></i></span>
+            </label>
+            <label class="switch-row compact-switch studio-switch-row">
+              <span><strong>SSAO 环境遮蔽</strong><span class="studio-help" id="realtimeSsaoHelp">增强接缝与接触层次</span></span>
+              <span class="switch-control"><input id="realtimeSsao" type="checkbox" role="switch" aria-label="SSAO 环境遮蔽" aria-describedby="realtimeSsaoHelp previewEffectsScope" checked><i></i></span>
+            </label>
+            <div class="ssao-tuning" hidden>
+              <label><span>强度</span><input id="realtimeSsaoStrength" type="range" aria-label="SSAO 强度" min="0" max="4" step="0.1"><output for="realtimeSsaoStrength"></output></label>
+              <label><span>半径</span><input id="realtimeSsaoRadius" type="range" aria-label="SSAO 半径" min="0.01" max="0.5" step="0.01"><output for="realtimeSsaoRadius"></output></label>
+              <label><span>采样</span><input id="realtimeSsaoSamples" type="range" aria-label="SSAO 采样数" min="8" max="64" step="8"><output for="realtimeSsaoSamples"></output></label>
+            </div>
+          </section>
+          <label class="select-row studio-tone-mapping">
+            <span><strong>色调映射</strong><span class="studio-help" id="toneMappingHelp">调整预览和 PNG 的高光与明暗</span></span>
+            <select id="toneMapping" aria-label="色调映射" aria-describedby="toneMappingHelp"><option value="neutral">Neutral · 中性</option><option value="aces">ACES · 电影色调</option><option value="agx">AgX · 柔和高光</option><option value="commerce">Commerce · 商品</option></select>
+          </label>
+        </section>
+      </div>
     </section>
-    <section class="studio-area material-area" aria-labelledby="materialAreaTitle"><div class="studio-area-heading"><h3 id="materialAreaTitle">材质效果</h3><small>调整模型表面的颜色与质感</small></div>
-      <label class="select-row material-picker"><span><strong>当前材质</strong><small id="materialCount">请先加载模型</small></span><select id="materialSelect" disabled></select></label>
-      <p class="material-scope-help">下方参数仅影响所选材质</p>
-      <div id="materialControls" class="material-controls"></div>
-      <div class="studio-actions material-actions"><button class="secondary-button" id="resetMaterial" type="button" disabled>重置当前材质</button><button class="secondary-button" id="resetAllMaterials" type="button" disabled>重置全部材质</button></div>
+    <section class="settings-category-panel" id="settings-category-lighting" data-settings-category-panel="lighting" aria-labelledby="settings-toggle-lighting" hidden inert>
+      <div class="settings-category-panel-inner">
+        <section class="panel-section studio-section lighting-section" aria-label="灯光参数">
+          <div class="studio-area-heading"><h3>环境与光照</h3></div>
+          <div class="environment-picker">
+            <button class="environment-picker-toggle" id="environmentPickerToggle" type="button" aria-haspopup="dialog">
+              <span><strong>HDRI 环境</strong><small id="environmentStatus" role="status">用全景图为模型打光</small></span>
+              <span class="environment-current" id="environmentCurrent"></span>
+            </button>
+            <dialog class="environment-dialog" id="environmentDialog" aria-labelledby="environmentDialogTitle">
+              <div class="environment-dialog-heading">
+                <div><strong id="environmentDialogTitle">选择 HDRI 环境</strong><small>选择全景光照，立即应用到模型</small></div>
+                <button id="environmentDialogClose" type="button" aria-label="关闭 HDRI 选择窗口">×</button>
+              </div>
+              <div class="environment-grid" id="environmentPresetGrid">${Object.entries(ENVIRONMENT_PRESETS).map(([key, preset]) => `
+                <button class="environment-card" type="button" data-environment-preset="${key}" aria-pressed="false">
+                  <span class="environment-card-preview">${key === 'neutral' ? '<span class="environment-placeholder">无 HDRI</span>' : environmentThumbnail(preset)}</span>
+                  <span>${preset.label}</span>
+                </button>`).join('')}</div>
+            </dialog>
+          </div>
+          <label class="switch-row compact-switch studio-switch-row">
+            <span><strong>HDRI 去色</strong><span class="studio-help" id="environmentDesaturateHelp">保留明暗，减少环境色偏</span></span>
+            <span class="switch-control"><input id="environmentDesaturate" type="checkbox" role="switch" aria-label="HDRI 去色" aria-describedby="environmentDesaturateHelp" checked><i></i></span>
+          </label>
+          <label class="switch-row compact-switch studio-switch-row">
+            <span><strong>预览 HDRI 背景</strong><span class="studio-help" id="environmentPreviewHelp">PNG 使用导出设置中的背景</span></span>
+            <span class="switch-control"><input id="environmentPreview" type="checkbox" role="switch" aria-label="预览 HDRI 背景" aria-describedby="environmentPreviewHelp" checked><i></i></span>
+          </label>
+          <section class="parameter-group"><div class="parameter-group-heading"><strong>照明</strong><small data-adjusted-count="lighting">已调整 0 项</small></div><div id="lightingControls"></div></section>
+          <details class="parameter-group collapsible-parameter-group"><summary>环境方向 <small data-adjusted-count="rotation">已调整 0 项</small></summary><div id="environmentRotationControl"></div></details>
+          <div class="studio-actions lighting-actions">
+            <button class="secondary-button" id="resetLighting" type="button">重置环境与光照</button>
+            <button class="secondary-button" id="saveDefaultLighting" type="button" aria-describedby="projectLightingScope" aria-controls="projectLightingConfirmation" aria-expanded="false" disabled>设为项目默认光照</button>
+          </div>
+          <div class="studio-reset-feedback" data-reset-feedback="lighting">
+            <p class="studio-action-status" role="status"></p>
+            <button class="secondary-button" id="undoLightingReset" type="button" hidden>撤销重置</button>
+          </div>
+          <p class="studio-help studio-action-scope" id="projectLightingScope">正在读取项目默认光照…</p>
+          <div class="studio-confirmation" id="projectLightingConfirmation" role="group" aria-labelledby="projectLightingConfirmationText" hidden>
+            <p class="studio-help" id="projectLightingConfirmationText">将当前光照设为所有访问者的项目默认光照？</p>
+            <div class="studio-actions">
+              <button class="secondary-button" id="cancelDefaultLighting" type="button">取消</button>
+              <button class="secondary-button" id="confirmDefaultLighting" type="button">确认设为项目默认</button>
+            </div>
+          </div>
+          <p class="studio-action-status" id="projectLightingStatus" role="status" tabindex="-1"></p>
+        </section>
+      </div>
     </section>
-    <button class="secondary-button danger-button" id="resetModelAppearance" type="button" disabled>恢复全部模型效果</button>
-  </section>`;
+    <section class="settings-category-panel" id="settings-category-material" data-settings-category-panel="material" aria-labelledby="settings-toggle-material" hidden inert>
+      <div class="settings-category-panel-inner">
+        <section class="panel-section studio-section material-section" aria-label="材质参数">
+          ${appearanceVariantTemplate()}
+          <section class="studio-area material-area" aria-labelledby="materialAreaTitle">
+            <div class="studio-area-heading"><h3 id="materialAreaTitle">材质效果</h3></div>
+            <label class="select-row material-picker">
+              <span><strong>当前材质</strong><span class="studio-help" id="materialCount">请先加载模型</span></span>
+              <select id="materialSelect" aria-label="当前材质" aria-describedby="materialCount materialScope" disabled></select>
+            </label>
+            <p class="studio-help studio-material-scope" id="materialScope">修改仅作用于所选材质。</p>
+            <div id="materialControls" class="material-controls"></div>
+            <div class="studio-actions material-actions">
+              <button class="secondary-button" id="resetMaterial" type="button" disabled>重置当前材质</button>
+              <button class="secondary-button" id="resetAllMaterials" type="button" disabled>重置全部材质</button>
+            </div>
+            <button class="secondary-button danger-button" id="resetModelAppearance" type="button" disabled>恢复默认光照与材质</button>
+            <div class="studio-reset-feedback" data-reset-feedback="material">
+              <p class="studio-action-status" role="status"></p>
+              <button class="secondary-button" id="undoMaterialReset" type="button" hidden>撤销重置</button>
+            </div>
+            <details class="texture-channels" id="materialTextureChannels" hidden>
+              <summary><span>纹理通道</span><span class="studio-help" id="materialTextureCount"></span></summary>
+              <p class="studio-help texture-scope">来自当前 GLB，仅供查看。</p>
+              <div class="texture-grid" id="materialTextureGrid"></div>
+            </details>
+          </section>
+        </section>
+      </div>
+    </section>
+  </div>`;
 }
 
 const toHex = (rgb) => `#${rgb.slice(0, 3).map((value) => Math.round(clamp(value, 0, 1, 0) * 255).toString(16).padStart(2, '0')).join('')}`;
 const fromHex = (hex) => [1, 3, 5].map((offset) => parseInt(hex.slice(offset, offset + 2), 16) / 255);
 const resetIcon = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4.4 7.2A6 6 0 1 1 4 12.9M4.4 7.2V3.8m0 3.4h3.4"/></svg>';
 const resetButtonMarkup = (key, label) => `<button class="parameter-reset" type="button" data-reset="${key}" aria-label="重置${label}" title="重置${label}">${resetIcon}</button>`;
-const rangeMarkup = (parameter) => `<div class="studio-range"><div class="studio-range-heading"><label for="${parameter.id}">${parameter.label}</label><span><input data-number="${parameter.id}" type="number" min="${parameter.min}" max="${parameter.max}" step="${parameter.step}"><em>${parameter.unit ?? ''}</em>${resetButtonMarkup(parameter.id, parameter.label)}</span></div><input id="${parameter.id}" type="range" min="${parameter.min}" max="${parameter.max}" step="${parameter.step}"></div>`;
+function rangeMarkup({ id, label, min, max, step, unit }) {
+  const unitLabel = unit ? `（${unit === '°' ? '度' : unit}）` : '';
+  return `<div class="studio-range">
+    <div class="studio-range-heading">
+      <label for="${id}">${label}</label>
+      <span>
+        <input data-number="${id}" type="number" aria-label="${label}数值${unitLabel}" min="${min}" max="${max}" step="${step}">
+        ${unit ? `<em aria-hidden="true">${unit}</em>` : ''}
+        ${resetButtonMarkup(id, label)}
+      </span>
+    </div>
+    <input id="${id}" type="range"${unit ? ` aria-label="${label}${unitLabel}"` : ''} min="${min}" max="${max}" step="${step}">
+  </div>`;
+}
+
+function syncProjectLightingAccess(studio, appearance) {
+  studio.defaultLightingWritable = appearance.writable;
+  studio.root.querySelector('#saveDefaultLighting').disabled = !appearance.writable || studio.savingDefaultLighting;
+  studio.root.querySelector('#projectLightingScope').textContent = appearance.writable
+    ? '所有访问者共用。已保存的模型光照优先。'
+    : '仅运行服务的电脑可更新项目默认光照。';
+}
 
 export class RenderStudio {
   constructor(viewer, root, { onMessage = () => {}, resolveAppearance = resolveModelAppearance } = {}) {
@@ -205,8 +326,11 @@ export class RenderStudio {
     this.doubleSidedUpdating = false;
     this.defaultLighting = { ...DEFAULT_LIGHTING };
     this.defaultLightingWritable = false;
+    this.savingDefaultLighting = false;
+    this.resetUndo = null;
     this.originalNormalScales = new WeakMap();
     this.materialNormalStrengths = new WeakMap();
+    this.realtimePostprocessing = loadRealtimePostprocessing();
     this.persistWriter = createCoalescedWriter(
       ({ modelId, snapshot }) => saveStudioState(modelId, snapshot),
       200,
@@ -214,19 +338,54 @@ export class RenderStudio {
     root.querySelector('#lightingControls').innerHTML = studioNumericParameters('lighting').map(rangeMarkup).join('');
     root.querySelector('#environmentRotationControl').innerHTML = studioNumericParameters('rotation').map(rangeMarkup).join('');
     this.bindLighting();
+    this.bindRealtimePostprocessing();
     root.querySelector('#materialSelect').addEventListener('change', () => this.renderMaterialControls());
     root.querySelector('#resetMaterial').addEventListener('click', () => this.resetCurrentMaterial());
     root.querySelector('#resetAllMaterials').addEventListener('click', () => this.resetAllMaterials());
     root.querySelector('#resetModelAppearance').addEventListener('click', () => this.resetModelAppearance());
+    root.querySelector('#undoLightingReset').addEventListener('click', () => this.undoLastReset('lighting'));
+    root.querySelector('#undoMaterialReset').addEventListener('click', () => this.undoLastReset('material'));
     this.syncLightingUI();
     this.defaultLightingReady = this.loadSharedDefault();
+  }
+
+  bindRealtimePostprocessing() {
+    const ssaoTuning = this.root.querySelector('.ssao-tuning');
+    ssaoTuning.hidden = !this.realtimePostprocessing.ssao;
+    const controls = [
+      ['#realtimeSmaa', 'smaa'],
+      ['#realtimeSsao', 'ssao'],
+    ];
+    for (const [selector, key] of controls) {
+      const control = this.root.querySelector(selector);
+      control.checked = this.realtimePostprocessing[key];
+      control.addEventListener('change', () => {
+        this.realtimePostprocessing[key] = control.checked;
+        if (key === 'ssao') ssaoTuning.hidden = !control.checked;
+        applyRealtimePostprocessing(this.viewer, this.realtimePostprocessing);
+        saveRealtimePostprocessing(this.realtimePostprocessing);
+      });
+    }
+    applyRealtimePostprocessing(this.viewer, this.realtimePostprocessing);
+    for (const [id, key] of [['realtimeSsaoStrength', 'ssaoStrength'], ['realtimeSsaoRadius', 'ssaoRadius'], ['realtimeSsaoSamples', 'ssaoSamples']]) {
+      const input = this.root.querySelector(`#${id}`); const output = input.nextElementSibling;
+      input.value = this.realtimePostprocessing[key]; output.value = input.value;
+      input.addEventListener('input', () => { this.realtimePostprocessing[key] = Number(input.value); output.value = input.value; applyRealtimePostprocessing(this.viewer, this.realtimePostprocessing); saveRealtimePostprocessing(this.realtimePostprocessing); });
+    }
+    // The effects composer creates its normal buffer when a model is loaded;
+    // re-apply once then so SSAO receives that buffer as well.
+    this.viewer.addEventListener('load', () => {
+      applyRealtimePostprocessing(this.viewer, this.realtimePostprocessing);
+      setTimeout(() => applyRealtimePostprocessing(this.viewer, this.realtimePostprocessing), 250);
+    });
   }
 
   bindLighting() {
     for (const parameter of this.globalAppearanceParameters()) this.bindLightingParameter(parameter);
     this.root.querySelector('#toneMapping').addEventListener('change', (event) => {
+      if (event.target.value !== this.lighting.toneMapping) this.markLightingEdit();
       this.lighting.toneMapping = event.target.value;
-      this.viewer.toneMapping = event.target.value;
+      applyRealtimeToneMapping(this.viewer, event.target.value);
       this.persist();
       this.updateResetButtons();
     });
@@ -240,7 +399,8 @@ export class RenderStudio {
       button.addEventListener('keydown', (event) => {
         const cards = [...this.root.querySelectorAll('[data-environment-preset]')];
         const index = cards.indexOf(button);
-        const columns = matchMedia('(max-width: 480px)').matches ? 1 : 2;
+        const grid = this.root.querySelector('#environmentPresetGrid');
+        const columns = getComputedStyle(grid).gridTemplateColumns.split(' ').length;
         const offsets = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -columns, ArrowDown: columns };
         if (!(event.key in offsets)) return;
         event.preventDefault();
@@ -248,24 +408,84 @@ export class RenderStudio {
       });
     }
     this.root.querySelector('#environmentDesaturate').addEventListener('change', (event) => {
+      if (event.target.checked !== this.lighting.desaturate) this.markLightingEdit();
       this.lighting.desaturate = event.target.checked;
       applyLighting(this.viewer, this.lighting);
       this.persist();
       this.updateResetButtons();
     });
     this.root.querySelector('#environmentPreview').addEventListener('change', (event) => {
+      if (event.target.checked !== this.lighting.showEnvironment) this.markLightingEdit();
       this.lighting.showEnvironment = event.target.checked;
       applyLighting(this.viewer, this.lighting);
       this.persist();
       this.updateResetButtons();
     });
-    this.root.querySelector('#resetLighting').addEventListener('click', () => {
-      this.lighting = { ...this.defaultLighting };
-      applyLighting(this.viewer, this.lighting);
-      this.syncLightingUI();
+    this.root.querySelector('#resetLighting').addEventListener('click', (event) => {
+      const previous = { ...this.lighting };
+      this.closeProjectLightingConfirmation();
+      this.restoreLighting(this.defaultLighting);
       this.persist();
+      if (Object.keys(previous).some((key) => previous[key] !== this.lighting[key])) {
+        this.showResetFeedback('lighting', '已重置环境与光照。', {
+          groups: ['lighting'],
+          focusTarget: event.currentTarget,
+          restore: () => this.restoreLighting(previous),
+        });
+      }
     });
-    this.root.querySelector('#saveDefaultLighting').addEventListener('click', () => this.saveSharedDefault());
+    this.bindProjectLightingConfirmation();
+  }
+
+  bindProjectLightingConfirmation() {
+    const trigger = this.root.querySelector('#saveDefaultLighting');
+    const confirmation = this.root.querySelector('#projectLightingConfirmation');
+    const cancel = this.root.querySelector('#cancelDefaultLighting');
+    trigger.addEventListener('click', () => {
+      if (!this.defaultLightingWritable || this.savingDefaultLighting) return;
+      if (!confirmation.hidden) {
+        this.closeProjectLightingConfirmation();
+        return;
+      }
+      this.root.querySelector('#projectLightingStatus').textContent = '';
+      confirmation.hidden = false;
+      trigger.setAttribute('aria-expanded', 'true');
+      cancel.focus();
+    });
+    cancel.addEventListener('click', () => this.closeProjectLightingConfirmation());
+    this.root.querySelector('#confirmDefaultLighting').addEventListener('click', () => {
+      if (confirmation.hidden) return;
+      this.closeProjectLightingConfirmation();
+      this.saveSharedDefault();
+      this.root.querySelector('#projectLightingStatus').focus({ preventScroll: true });
+    });
+    confirmation.addEventListener('keydown', (event) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      this.closeProjectLightingConfirmation();
+    });
+  }
+
+  closeProjectLightingConfirmation() {
+    const confirmation = this.root.querySelector('#projectLightingConfirmation');
+    if (confirmation.hidden) return;
+    const restoreFocus = confirmation.contains(document.activeElement);
+    confirmation.hidden = true;
+    const trigger = this.root.querySelector('#saveDefaultLighting');
+    trigger.setAttribute('aria-expanded', 'false');
+    if (restoreFocus) trigger.focus({ preventScroll: true });
+  }
+
+  markLightingEdit() {
+    this.clearResetFeedback('lighting');
+    this.closeProjectLightingConfirmation();
+  }
+
+  restoreLighting(lighting) {
+    this.lighting = { ...lighting };
+    applyLighting(this.viewer, this.lighting);
+    this.root.querySelector('#environmentStatus').textContent = '用全景图为模型打光';
+    this.syncLightingUI();
   }
 
   bindLightingParameter(parameter) {
@@ -273,6 +493,7 @@ export class RenderStudio {
     const number = this.root.querySelector(`[data-number="${parameter.id}"]`);
     const update = (raw) => {
       const value = clampStudioParameter(parameter, raw, this.lighting[parameter.key]);
+      if (value !== this.lighting[parameter.key]) this.markLightingEdit();
       this.lighting[parameter.key] = value;
       range.value = value;
       number.value = formatStudioParameter(parameter, value);
@@ -294,6 +515,7 @@ export class RenderStudio {
 
   resetLightingParameter(key) {
     const parameter = this.globalAppearanceParameters('all').find((item) => item.key === key);
+    this.markLightingEdit();
     this.lighting = resetStudioParameter(this.lighting, this.defaultLighting, parameter);
     applyLighting(this.viewer, this.lighting);
     this.syncLightingUI();
@@ -303,10 +525,7 @@ export class RenderStudio {
   async loadSharedDefault() {
     const appearance = await this.resolveAppearance(null);
     this.defaultLighting = appearance.projectDefault;
-    this.defaultLightingWritable = appearance.writable;
-    const button = this.root.querySelector('#saveDefaultLighting');
-    button.disabled = !appearance.writable;
-    button.title = appearance.writable ? '保存后所有访问者首次预览都使用这套光照' : '只能在运行服务的电脑上保存';
+    syncProjectLightingAccess(this, appearance);
     if (!this.modelId) {
       this.lighting = { ...appearance.projectDefault };
       applyLighting(this.viewer, this.lighting);
@@ -315,23 +534,31 @@ export class RenderStudio {
   }
 
   async saveSharedDefault() {
-    if (!this.defaultLightingWritable) return;
+    if (!this.defaultLightingWritable || this.savingDefaultLighting) return;
     const button = this.root.querySelector('#saveDefaultLighting');
+    const status = this.root.querySelector('#projectLightingStatus');
+    this.savingDefaultLighting = true;
     button.disabled = true;
+    status.className = 'studio-action-status';
+    status.textContent = '正在保存项目默认光照…';
     try {
       this.defaultLighting = sanitizeLighting(await saveDefaultLighting(this.lighting));
       this.updateResetButtons();
-      this.onMessage('当前光照已保存为所有人的默认设置。', 'success');
+      status.className = 'studio-action-status success';
+      status.textContent = '已保存项目默认光照。';
     } catch {
-      this.onMessage('默认光照保存失败，请在运行服务的电脑上重试。', 'error');
+      status.className = 'studio-action-status error';
+      status.textContent = '项目默认光照保存失败。请在运行服务的电脑上重试。';
     } finally {
-      button.disabled = false;
+      this.savingDefaultLighting = false;
+      button.disabled = !this.defaultLightingWritable;
     }
   }
 
   async selectPreset(key, reset = false) {
     const preset = ENVIRONMENT_PRESETS[key] ?? ENVIRONMENT_PRESETS.neutral;
     const previousLighting = { ...this.lighting };
+    this.markLightingEdit();
     this.lighting = sanitizeLighting({
       ...(reset ? DEFAULT_LIGHTING : this.lighting), preset: Object.hasOwn(ENVIRONMENT_PRESETS, key) ? key : 'neutral',
       exposure: preset.exposure, shadowIntensity: preset.shadowIntensity, shadowSoftness: preset.shadowSoftness,
@@ -364,7 +591,10 @@ export class RenderStudio {
 
   syncLightingUI() {
     const preset = ENVIRONMENT_PRESETS[this.lighting.preset];
-    this.root.querySelector('#environmentCurrent').innerHTML = `<img src="${preset.thumbnailUrl}" alt="" width="72" height="40"><strong>${preset.label}</strong><i aria-hidden="true">⌄</i>`;
+    const currentLabel = preset.url === 'neutral'
+      ? '<strong class="environment-placeholder">无 HDRI</strong>'
+      : `${environmentThumbnail(preset)}<strong>${preset.label}</strong>`;
+    this.root.querySelector('#environmentCurrent').innerHTML = `${currentLabel}<i aria-hidden="true">⌄</i>`;
     for (const card of this.root.querySelectorAll('[data-environment-preset]')) {
       const selected = card.dataset.environmentPreset === this.lighting.preset;
       card.classList.toggle('selected', selected);
@@ -398,13 +628,12 @@ export class RenderStudio {
 
   async loadModel(modelId) {
     this.flushPersist();
+    this.clearResetFeedback();
+    this.closeProjectLightingConfirmation();
     await this.defaultLightingReady;
     const appearance = await this.resolveAppearance(modelId);
     this.defaultLighting = appearance.projectDefault;
-    this.defaultLightingWritable = appearance.writable;
-    const saveButton = this.root.querySelector('#saveDefaultLighting');
-    saveButton.disabled = !appearance.writable;
-    saveButton.title = appearance.writable ? '保存后所有访问者首次预览都使用这套光照' : '只能在运行服务的电脑上保存';
+    syncProjectLightingAccess(this, appearance);
     this.modelId = modelId;
     this.materials = [...(this.viewer.model?.materials ?? [])];
     this.originalNormalScales = new WeakMap();
@@ -414,15 +643,15 @@ export class RenderStudio {
       if (material.normalTexture?.texture) this.materialNormalStrengths.set(material, 1);
     }
     this.originalMaterials = this.materials.map((material) => readMaterial(material, this.materialNormalStrengths));
-    this.lighting = sanitizeLighting(appearance.lighting);
     this.materialsByIndex = appearance.materialsByIndex;
-    applyLighting(this.viewer, this.lighting);
-    this.syncLightingUI();
+    this.restoreLighting(sanitizeLighting(appearance.lighting));
     this.materials.forEach((material, index) => {
       if (this.materialsByIndex[index]) applyMaterial(material, this.materialsByIndex[index], this.materialApplyOptions());
     });
     const select = this.root.querySelector('#materialSelect');
-    select.innerHTML = this.materials.map((material, index) => `<option value="${index}">${index + 1}. ${material.name || `未命名材质 ${index + 1}`}</option>`).join('');
+    select.replaceChildren(...this.materials.map((material, index) =>
+      new Option(`${index + 1}. ${material.name || `未命名材质 ${index + 1}`}`, index),
+    ));
     select.disabled = this.materials.length === 0;
     this.root.querySelector('#materialCount').textContent = `${this.materials.length} 个材质`;
     for (const id of ['resetMaterial', 'resetAllMaterials', 'resetModelAppearance']) this.root.querySelector(`#${id}`).disabled = this.materials.length === 0;
@@ -431,6 +660,8 @@ export class RenderStudio {
 
   unloadModel() {
     this.flushPersist();
+    this.clearResetFeedback();
+    this.closeProjectLightingConfirmation();
     this.materialRenderToken += 1;
     this.modelId = null;
     this.materials = [];
@@ -442,26 +673,39 @@ export class RenderStudio {
     this.root.querySelector('#materialSelect').disabled = true;
     this.root.querySelector('#materialCount').textContent = '请先加载模型';
     this.root.querySelector('#materialControls').innerHTML = '';
+    const textureDetails = this.root.querySelector('#materialTextureChannels');
+    textureDetails.open = false;
+    textureDetails.hidden = true;
+    textureDetails.querySelector('#materialTextureGrid').replaceChildren();
     for (const id of ['resetMaterial', 'resetAllMaterials', 'resetModelAppearance']) this.root.querySelector(`#${id}`).disabled = true;
   }
 
   renderMaterialControls() {
     const renderToken = ++this.materialRenderToken;
-    const index = Number(this.root.querySelector('#materialSelect').value || 0);
+    const select = this.root.querySelector('#materialSelect');
+    const index = Number(select.value || 0);
     const material = this.materials[index];
     const container = this.root.querySelector('#materialControls');
+    const textureDetails = this.root.querySelector('#materialTextureChannels');
+    textureDetails.hidden = !material;
     if (!material) { container.innerHTML = ''; return; }
     const value = readMaterial(material, this.materialNormalStrengths);
     const basicParameters = studioNumericParameters('material-basic');
     const advanced = visibleStudioParameters('material-advanced', material).filter((parameter) => parameter.kind === 'number');
     const originalDoubleSided = this.originalMaterials[index]?.doubleSided ? '双面' : '单面';
-    container.innerHTML = `<section class="texture-channels" aria-label="纹理通道"><div class="texture-heading"><strong>纹理通道</strong><small>仅查看 · 来自当前 GLB</small></div><div class="texture-grid" id="materialTextureGrid"></div></section>
-      <div class="material-colors"><label><span>基础颜色</span><span><input id="materialBaseColor" type="color" value="${toHex(value.baseColor)}">${resetButtonMarkup('materialBaseColor', '基础颜色')}</span></label><label><span>发光颜色</span><span><input id="materialEmissive" type="color" value="${toHex(value.emissive)}">${resetButtonMarkup('materialEmissive', '发光颜色')}</span></label></div>
-      <div class="parameter-group-heading"><strong>常用参数</strong><small data-adjusted-count="material-basic">已调整 0 项</small></div>${basicParameters.map((parameter) => `${rangeMarkup(parameter)}${parameter.key === 'normalStrength' ? '<p class="parameter-help" data-normal-strength-help>当前材质没有法线贴图</p>' : ''}`).join('')}
-      <details class="advanced-material surface-options"><summary>表面选项</summary><div class="surface-options-content"><label class="select-row material-side-row"><span><strong>网格表面</strong><small>模型原始设置：${originalDoubleSided}</small></span><select id="materialDoubleSided"><option value="false">单面</option><option value="true">双面</option></select></label>
-      <p class="material-side-help">双面会显示网格背面；存在重叠面或内部结构时，可能出现穿插、重影或闪烁。</p>
+    container.innerHTML = `<p class="material-full-name"></p>
+      <div class="parameter-group-heading"><strong>常用参数</strong><small data-adjusted-count="material-basic">已调整 0 项</small></div>
+      <div class="material-colors">
+        <div class="material-color-control"><label for="materialBaseColor">基础颜色</label><span><input id="materialBaseColor" type="color" value="${toHex(value.baseColor)}">${resetButtonMarkup('materialBaseColor', '基础颜色')}</span></div>
+        <div class="material-color-control"><label for="materialEmissive">发光颜色</label><span><input id="materialEmissive" type="color" value="${toHex(value.emissive)}">${resetButtonMarkup('materialEmissive', '发光颜色')}</span></div>
+      </div>
+      ${basicParameters.map(rangeMarkup).join('')}
+      <details class="advanced-material surface-options"><summary>表面选项</summary><div class="surface-options-content">
+      <label class="select-row material-side-row"><span><strong>网格表面</strong><span class="studio-help" id="materialOriginalSides">模型原始设置：${originalDoubleSided}</span></span><select id="materialDoubleSided" aria-label="网格表面" aria-describedby="materialOriginalSides materialDoubleSidedHelp"><option value="false">单面</option><option value="true">双面</option></select></label>
+      <p class="studio-help" id="materialDoubleSidedHelp">双面会显示网格背面。重叠面或内部结构可能产生穿插、重影或闪烁。</p>
       <label class="select-row"><span><strong>透明模式</strong></span><select id="materialAlphaMode"><option value="OPAQUE">不透明</option><option value="MASK">遮罩</option><option value="BLEND">混合</option></select></label></div></details>
       ${advanced.length ? `<details class="advanced-material"><summary>高级物理参数 <small data-adjusted-count="material-advanced">已调整 0 项</small></summary>${advanced.map(rangeMarkup).join('')}</details>` : ''}`;
+    container.querySelector('.material-full-name').textContent = select.selectedOptions[0]?.textContent ?? '';
     for (const parameter of [...basicParameters, ...advanced]) {
       const fallback = parameter.key === 'normalStrength' ? 1 : parameter.min;
       this.bindMaterialRange(parameter, value[parameter.key] ?? this.originalMaterials[index]?.[parameter.key] ?? fallback);
@@ -473,37 +717,44 @@ export class RenderStudio {
     const doubleSided = container.querySelector('#materialDoubleSided'); doubleSided.value = String(value.doubleSided); doubleSided.addEventListener('change', (event) => this.updateDoubleSided(event));
     const alphaMode = container.querySelector('#materialAlphaMode'); alphaMode.value = value.alphaMode; alphaMode.addEventListener('change', (event) => this.updateMaterial({ alphaMode: event.target.value }));
     const hasNormalTexture = Boolean(material.normalTexture?.texture);
+    container.querySelector('#materialNormalStrength')?.closest('.studio-range')?.toggleAttribute('hidden', !hasNormalTexture);
     for (const input of container.querySelectorAll('#materialNormalStrength, [data-number="materialNormalStrength"]')) input.disabled = !hasNormalTexture;
-    container.querySelector('[data-reset="materialNormalStrength"]')?.toggleAttribute('disabled', !hasNormalTexture || value.normalStrength === this.originalMaterials[index]?.normalStrength);
-    container.querySelector('[data-normal-strength-help]')?.toggleAttribute('hidden', hasNormalTexture);
-    this.renderTextureChannels(material, container.querySelector('#materialTextureGrid'), renderToken);
+    this.updateMaterialResetButtons(index);
+    this.renderTextureChannels(material, textureDetails, renderToken);
   }
 
-  async renderTextureChannels(material, grid, renderToken) {
+  renderTextureChannels(material, details, renderToken) {
     const channels = getMaterialTextureChannels(material);
-    grid.innerHTML = channels.map((channel) => `<article class="texture-card" data-texture-channel="${channel.key}"><div class="texture-preview"><span>${channel.texture ? '生成预览中' : '未使用贴图'}</span></div><div class="texture-meta"><strong></strong><small class="texture-name"></small><small class="texture-description"></small></div></article>`).join('');
+    const usedCount = channels.filter((channel) => channel.texture).length;
+    details.querySelector('#materialTextureCount').textContent = usedCount ? `${usedCount} 个贴图` : '无贴图';
+    const grid = details.querySelector('#materialTextureGrid');
+    grid.innerHTML = channels.map((channel) => `<article class="texture-card${channel.texture ? '' : ' empty'}" data-texture-channel="${channel.key}">
+      ${channel.texture ? '<div class="texture-preview"><span>生成预览中</span></div>' : ''}
+      <div class="texture-meta"><strong></strong><small class="texture-name"></small><small class="texture-description"></small></div>
+    </article>`).join('');
     const cards = [...grid.querySelectorAll('.texture-card')];
     channels.forEach((channel, channelIndex) => {
       const card = cards[channelIndex];
       card.querySelector('.texture-meta > strong').textContent = channel.label;
       card.querySelector('.texture-description').textContent = channel.description;
       if (!channel.texture) {
-        card.classList.add('empty');
         card.querySelector('.texture-name').textContent = '未使用贴图';
         return;
       }
       const source = channel.texture.source;
       card.querySelector('.texture-name').textContent = source?.name || channel.texture.name || (source?.type === 'external' ? '外部纹理' : '嵌入纹理');
-      this.getTextureThumbnail(channel.texture).then((thumbnail) => {
-        if (!thumbnail || renderToken !== this.materialRenderToken || !card.isConnected) return;
+      const preview = card.querySelector('.texture-preview');
+      this.getTextureThumbnail(channel.texture).catch(() => null).then((thumbnail) => {
+        if (renderToken !== this.materialRenderToken || !card.isConnected) return;
+        if (!thumbnail) {
+          card.classList.add('thumbnail-error');
+          preview.textContent = '预览不可用';
+          return;
+        }
         const image = new Image();
         image.src = thumbnail;
         image.alt = `${channel.label}贴图预览`;
-        card.querySelector('.texture-preview').replaceChildren(image);
-      }).catch(() => {
-        if (renderToken !== this.materialRenderToken || !card.isConnected) return;
-        card.classList.add('thumbnail-error');
-        card.querySelector('.texture-preview span').textContent = '预览不可用';
+        preview.replaceChildren(image);
       });
     });
   }
@@ -527,6 +778,7 @@ export class RenderStudio {
     try {
       material.setDoubleSided(requested);
       if (material.getDoubleSided() !== requested) throw new Error('DOUBLE_SIDED_MISMATCH');
+      if (requested !== previous) this.clearResetFeedback('material');
       this.materialsByIndex[index] = readMaterial(material, this.materialNormalStrengths);
       this.persist();
       this.updateMaterialResetButtons(index);
@@ -565,8 +817,11 @@ export class RenderStudio {
     const index = Number(this.root.querySelector('#materialSelect').value || 0);
     const material = this.materials[index];
     if (!material) return;
+    const before = this.resetUndo?.groups.includes('material') ? readMaterial(material, this.materialNormalStrengths) : null;
     applyMaterial(material, change, this.materialApplyOptions());
-    this.materialsByIndex[index] = readMaterial(material, this.materialNormalStrengths);
+    const current = readMaterial(material, this.materialNormalStrengths);
+    if (before && JSON.stringify(before) !== JSON.stringify(current)) this.clearResetFeedback('material');
+    this.materialsByIndex[index] = current;
     this.persist();
     this.updateMaterialResetButtons(index);
   }
@@ -606,13 +861,15 @@ export class RenderStudio {
   resetCurrentMaterial() {
     const index = Number(this.root.querySelector('#materialSelect').value || 0);
     if (!this.materials[index] || !this.originalMaterials[index]) return;
+    this.rememberMaterialReset([index], 'resetMaterial', '已重置当前材质。');
     applyMaterial(this.materials[index], this.originalMaterials[index], this.materialApplyOptions());
     delete this.materialsByIndex[index];
     this.persist();
     this.renderMaterialControls();
   }
 
-  resetAllMaterials() {
+  resetAllMaterials({ remember = true } = {}) {
+    if (remember) this.rememberMaterialReset(Object.keys(this.materialsByIndex), 'resetAllMaterials', '已重置全部材质。');
     this.materials.forEach((material, index) => applyMaterial(material, this.originalMaterials[index], this.materialApplyOptions()));
     this.materialsByIndex = {};
     this.persist();
@@ -620,22 +877,74 @@ export class RenderStudio {
   }
 
   async resetModelAppearance() {
-    if (!this.modelId) return;
-    this.cancelPersist?.();
-    clearStudioState(this.modelId);
-    const appearance = await this.resolveAppearance(this.modelId);
+    const { modelId, materials } = this;
+    if (!modelId || this.pendingAppearanceReset === materials) return;
+    this.pendingAppearanceReset = materials;
+    let appearance;
+    try {
+      appearance = await this.resolveAppearance(null);
+    } finally {
+      if (this.pendingAppearanceReset === materials) this.pendingAppearanceReset = null;
+    }
+    if (this.modelId !== modelId || this.materials !== materials) return;
+    const previousLighting = Object.keys(this.lighting).some((key) => this.lighting[key] !== appearance.projectDefault[key])
+      ? { ...this.lighting }
+      : null;
+    this.rememberMaterialReset?.(Object.keys(this.materialsByIndex), 'resetModelAppearance', '已恢复默认光照与材质。', previousLighting);
+    this.closeProjectLightingConfirmation?.();
     this.defaultLighting = appearance.projectDefault;
-    this.defaultLightingWritable = appearance.writable;
-    const saveButton = this.root.querySelector('#saveDefaultLighting');
-    saveButton.disabled = !appearance.writable;
-    saveButton.title = appearance.writable ? '保存后所有访问者首次预览都使用这套光照' : '只能在运行服务的电脑上保存';
-    this.lighting = sanitizeLighting(appearance.lighting);
+    syncProjectLightingAccess(this, appearance);
+    this.lighting = sanitizeLighting(appearance.projectDefault);
     applyLighting(this.viewer, this.lighting);
     this.syncLightingUI();
-    this.resetAllMaterials();
+    this.resetAllMaterials({ remember: false });
     this.cancelPersist?.();
-    clearStudioState(this.modelId);
+    clearStudioState(modelId);
     this.onMessage('已恢复模型的默认光照和材质。', 'success');
+  }
+
+  rememberMaterialReset(indices, buttonId, message, lighting = null) {
+    const entries = indices.filter((index) => Object.hasOwn(this.materialsByIndex, index))
+      .map((index) => [index, structuredClone(this.materialsByIndex[index])]);
+    if (!entries.length && !lighting) return;
+    this.showResetFeedback('material', message, {
+      groups: lighting ? ['lighting', 'material'] : ['material'],
+      focusTarget: this.root.querySelector(`#${buttonId}`),
+      restore: () => {
+        for (const [index, value] of entries) {
+          if (this.materials[index]) applyMaterial(this.materials[index], value, this.materialApplyOptions());
+          this.materialsByIndex[index] = value;
+        }
+        if (lighting) this.restoreLighting(lighting);
+        this.renderMaterialControls();
+      },
+    });
+  }
+
+  clearResetFeedback(group) {
+    if (group && !this.resetUndo?.groups.includes(group)) return;
+    this.resetUndo = null;
+    for (const feedback of this.root.querySelectorAll('[data-reset-feedback]')) {
+      feedback.querySelector('p').textContent = '';
+      feedback.querySelector('button').hidden = true;
+    }
+  }
+
+  showResetFeedback(section, message, undo = null) {
+    this.clearResetFeedback();
+    const feedback = this.root.querySelector(`[data-reset-feedback="${section}"]`);
+    feedback.querySelector('p').textContent = message;
+    feedback.querySelector('button').hidden = !undo;
+    if (undo) this.resetUndo = { section, ...undo };
+  }
+
+  undoLastReset(section) {
+    const undo = this.resetUndo;
+    if (undo?.section !== section) return;
+    undo.restore();
+    this.persist();
+    this.showResetFeedback(section, '已撤销重置。');
+    undo.focusTarget.focus({ preventScroll: true });
   }
 
   persist() {

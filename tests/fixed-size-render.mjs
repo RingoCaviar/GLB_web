@@ -32,6 +32,10 @@ function fixture(overrides = {}) {
     requestFrame: (callback) => callback(),
     createBitmap: async () => ({ width: 640, height: 480, close: () => calls.push('close-bitmap') }),
     beginTextureDetail: () => texture,
+    beginPreviewEffectsPause: () => {
+      calls.push('pause-preview-effects');
+      return { restore: () => calls.push('restore-preview-effects') };
+    },
     setTimer: () => 1,
     clearTimer: () => {},
   };
@@ -51,7 +55,10 @@ function fixture(overrides = {}) {
   assert.deepEqual(viewer.style, originalStyle);
   assert.equal(viewer.skyboxImage, 'studio.hdr');
   assert.equal(viewer.shadowIntensity, 0.8);
-  assert.deepEqual(calls, ['jump', 'close-bitmap', 'restore-texture']);
+  assert.deepEqual(calls, [
+    'pause-preview-effects', 'jump', 'close-bitmap',
+    'restore-texture', 'restore-preview-effects',
+  ]);
 }
 
 {
@@ -134,11 +141,13 @@ for (const [pixelRatio, width, height] of [
     height: '240px',
   });
   assert.deepEqual(calls, [
+    'pause-preview-effects',
     'jump',
     'apply-framing',
     'close-bitmap',
     'restore-texture',
     'restore-framing',
+    'restore-preview-effects',
   ]);
 }
 

@@ -3,16 +3,17 @@ export const ExportQualityMode = Object.freeze({
   STANDARD: 'standard',
   HIGH: 'high',
 });
+export const DEFAULT_EXPORT_QUALITY = ExportQualityMode.HIGH;
 
 export function sanitizeExportQuality(value) {
-  return value === ExportQualityMode.HIGH ? ExportQualityMode.HIGH : ExportQualityMode.STANDARD;
+  return value === ExportQualityMode.STANDARD || value === ExportQualityMode.HIGH ? value : DEFAULT_EXPORT_QUALITY;
 }
 
 export function loadExportQuality(storage = globalThis.localStorage) {
   try {
     return sanitizeExportQuality(storage?.getItem(EXPORT_QUALITY_STORAGE_KEY));
   } catch {
-    return ExportQualityMode.STANDARD;
+    return DEFAULT_EXPORT_QUALITY;
   }
 }
 

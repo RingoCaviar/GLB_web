@@ -10,6 +10,8 @@ from .framing import apply_camera_framing, framing_from_camera, initial_framing
 
 _ROLE = "glb_web_orbit_role"
 _TRACK_NAME = "GLB Web 目标点"
+_CYCLES_CAMERA_OVERRIDE = "glb_web_cycles_camera_override"
+_CYCLES_LOCAL_CAMERA_BUG = bpy.app.version[:2] == (5, 1)
 
 
 def _owned(item, role):
@@ -63,40 +65,63 @@ def _track_target(camera, point):
     constraint.up_axis = "UP_Y"
 
 
-def get_rig(settings):
-    scene = settings.id_data
-    camera, point = settings.rig_camera, settings.rig_target
-    if not _rig_object(camera, "rig_camera", "CAMERA") or not _rig_object(point, "rig_target", "EMPTY"):
+def get_framing_setup(settings, source=None):
+    source = source or settings.target or settings.framing_source
+    if source is None:
         return None
-    if scene.objects.get(camera.name) != camera or scene.objects.get(point.name) != point:
-        return None
-    return camera, point
+    for setup in settings.framings:
+        if setup.framing_source == source:
+            return setup
+    if settings.framing_source == source:
+        return settings
+    return None
 
 
-def current_framing(settings, depsgraph):
-    pair = get_rig(settings)
+def is_framing_target(obj):
+    return _owned(obj, "rig_target")
+
+
+def _scene_rig_object(scene, obj, role, obj_type):
+    if _rig_object(obj, role, obj_type) and scene.objects.get(obj.name) == obj:
+        return obj
+    return None
+
+
+def get_rig(setup):
+    if setup is None:
+        return None
+    scene = setup.id_data
+    camera = _scene_rig_object(scene, setup.rig_camera, "rig_camera", "CAMERA")
+    point = _scene_rig_object(scene, setup.rig_target, "rig_target", "EMPTY")
+    return (camera, point) if camera is not None and point is not None else None
+
+
+def current_framing(setup, depsgraph):
+    pair = get_rig(setup)
     if pair is None:
         raise ValueError("请先添加取景相机和目标点。")
-    source = settings.framing_source
+    source = setup.framing_source
     objects = depsgraph.view_layer.objects
     if source is None or objects.get(source.name) != source:
         raise ValueError("请在当前视图层显示拍摄对象，或为当前产品重新取景。")
-    if settings.target is not None and settings.target != source:
-        raise ValueError("拍摄对象已更改，请为此产品重新取景。")
     camera, point = pair
     if objects.get(camera.name) != camera or objects.get(point.name) != point:
         raise ValueError("请在当前视图层显示取景集合。")
     return framing_from_camera(camera, point, depsgraph)
 
 
-def confirmed_framing(settings, depsgraph):
-    if not settings.confirmed_framing:
+def confirmed_framing(setup, depsgraph):
+    if setup is None:
+        raise ValueError("请先为当前产品添加取景相机。")
+    if setup.reframing:
+        raise ValueError("正在重新取景，请先确认新构图。")
+    if not setup.confirmed_framing:
         raise ValueError("请先确认取景，再预览或渲染序列。")
-    framing = current_framing(settings, depsgraph)
+    framing = current_framing(setup, depsgraph)
     values = asdict(framing)
     values["center"] = list(framing.center)
     try:
-        confirmed = json.loads(settings.confirmed_framing)
+        confirmed = json.loads(setup.confirmed_framing)
     except ValueError:
         confirmed = None
     if values != confirmed:
@@ -105,33 +130,36 @@ def confirmed_framing(settings, depsgraph):
 
 
 def ensure_rig(context, settings, target, pitch, *, reset=False):
-    existing = get_rig(settings)
+    setup = get_framing_setup(settings, target)
+    existing = get_rig(setup)
     if existing is not None and not reset:
         return existing
 
-    source = target if reset else target or settings.framing_source
+    source = target or (setup.framing_source if setup is not None else None)
     if source is None or context.view_layer.objects.get(source.name) != source:
         raise ValueError("请在当前视图层选择产品物体或其父级。")
-    reset = reset or settings.framing_source != source
+    if source.type in {"CAMERA", "LIGHT"} or is_framing_target(source):
+        raise ValueError("请选择产品物体或其父级作为拍摄对象。")
     framing = initial_framing(source, context.view_layer, settings.width, settings.height)
-    collection = _rig_collection(context.scene, "framing", "取景")
+    scene = context.scene
+    collection = _rig_collection(scene, "framing", "取景")
 
-    camera = _find_object(collection, settings.rig_camera, "rig_camera", "CAMERA")
-    point = _find_object(collection, settings.rig_target, "rig_target", "EMPTY")
+    camera = point = None
+    if setup is not None:
+        camera = _scene_rig_object(scene, setup.rig_camera, "rig_camera", "CAMERA")
+        point = _scene_rig_object(scene, setup.rig_target, "rig_target", "EMPTY")
     if camera is None:
-        camera = _new_camera("取景相机", "rig_camera")
+        camera = _new_camera(f"取景相机 · {source.name}", "rig_camera")
         camera.data.display_size = framing.distance * 0.12
-        apply_camera_framing(camera, framing, pitch, 1, 1)
-    elif reset:
-        apply_camera_framing(camera, framing, pitch, 1, 1)
+    apply_camera_framing(camera, framing, pitch, 1, 1)
 
     if point is None:
-        point = bpy.data.objects.new("目标点", None)
+        point = bpy.data.objects.new(f"目标点 · {source.name}", None)
         point[_ROLE] = "rig_target"
         point.empty_display_type = "SPHERE"
         point.empty_display_size = framing.distance * 0.035
         point.location = framing.center
-    elif reset:
+    else:
         transform = point.matrix_world.copy()
         transform.translation = framing.center
         point.matrix_world = transform
@@ -139,18 +167,26 @@ def ensure_rig(context, settings, target, pitch, *, reset=False):
     _link_object(collection, camera)
     _link_object(collection, point)
     _track_target(camera, point)
-    settings.rig_camera = camera
-    settings.rig_target = point
-    settings.framing_source = source
+    if setup is None:
+        setup = settings.framings.add()
+        setup.framing_source = source
+    setup.rig_camera = camera
+    setup.rig_target = point
+    setup.confirmed_framing = ""
+    setup.reframing = False
     context.view_layer.update()
     return camera, point
+
+
+def preview_collection(scene):
+    return _rig_collection(scene, "preview", "预览")
 
 
 def ensure_preview_camera(context, settings):
     camera = settings.preview_camera
     if _rig_object(camera, "preview_camera", "CAMERA") and context.scene.objects.get(camera.name) == camera:
         return camera
-    collection = _rig_collection(context.scene, "preview", "预览")
+    collection = preview_collection(context.scene)
     camera = _find_object(collection, camera, "preview_camera", "CAMERA")
     if camera is None:
         camera = _new_camera("预览相机", "preview_camera")
@@ -208,6 +244,56 @@ def _saved_camera_view(space):
     )
 
 
+def restore_cycles_camera(scene):
+    override = scene.get(_CYCLES_CAMERA_OVERRIDE)
+    if override is None:
+        return
+    if scene.camera == override.get("preview"):
+        scene.camera = override.get("original")
+    del scene[_CYCLES_CAMERA_OVERRIDE]
+
+
+def clear_cycles_cameras():
+    for scene in bpy.data.scenes:
+        restore_cycles_camera(scene)
+
+
+def sync_cycles_cameras():
+    if not _CYCLES_LOCAL_CAMERA_BUG:
+        return None
+
+    # Cycles 5.1 uses the scene camera optics with the local camera's view matrix.
+    # Keep the original camera in the undo snapshot so undo/redo can recover it.
+    desired = {}
+    if not bpy.app.is_job_running("RENDER"):
+        for window in bpy.context.window_manager.windows:
+            if window.scene.render.engine != "CYCLES":
+                continue
+            for area in window.screen.areas:
+                if area.type != "VIEW_3D":
+                    continue
+                space = area.spaces.active
+                if (space.as_pointer() in _view_states and space.region_3d is not None
+                        and space.shading.type == "RENDERED" and _saved_camera_view(space)):
+                    desired[window.scene] = space.camera
+
+    for scene in bpy.data.scenes:
+        camera = desired.get(scene)
+        if camera is None:
+            restore_cycles_camera(scene)
+        elif camera != scene.camera:
+            override = scene.get(_CYCLES_CAMERA_OVERRIDE)
+            if override is not None and scene.camera == override.get("preview"):
+                override["preview"] = camera
+            else:
+                state = {"preview": camera}
+                if scene.camera is not None:
+                    state["original"] = scene.camera
+                scene[_CYCLES_CAMERA_OVERRIDE] = state
+            scene.camera = camera
+    return 0.15 if _view_states else None
+
+
 def _leave_saved_camera_view(context, space):
     space.camera = context.scene.camera
     space.use_local_camera = False
@@ -233,6 +319,9 @@ def show_camera(context, camera):
     space.camera = camera
     space.lock_camera = False
     region.view_perspective = "CAMERA"
+    if sync_cycles_cameras() is not None and not bpy.app.background:
+        if not bpy.app.timers.is_registered(sync_cycles_cameras):
+            bpy.app.timers.register(sync_cycles_cameras, first_interval=0.15)
     context.area.tag_redraw()
     return True
 
@@ -246,10 +335,10 @@ def restore_view(context):
     space = _viewport(context)
     if space is None:
         return False
-    state = _view_states.pop(space.as_pointer(), None)
-    if state is not None:
-        state.restore()
-    elif _saved_camera_view(space):
+    if restore_view_state(space.as_pointer()):
+        context.area.tag_redraw()
+        return True
+    if _saved_camera_view(space):
         _leave_saved_camera_view(context, space)
     else:
         return False
@@ -257,7 +346,17 @@ def restore_view(context):
     return True
 
 
+def restore_view_state(space_pointer):
+    state = _view_states.pop(space_pointer, None)
+    if state is None:
+        return False
+    state.restore()
+    sync_cycles_cameras()
+    return True
+
+
 def clear_view_state():
+    clear_cycles_cameras()
     for state in _view_states.values():
         state.restore()
     _view_states.clear()

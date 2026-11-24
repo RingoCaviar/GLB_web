@@ -131,13 +131,12 @@ async function replaceFile(source, destination) {
 
 export function createThumbnailMiddleware(projectRoot, suppressedHotUpdates = new Set()) {
   const modelsRoot = resolve(projectRoot, 'models');
-  const addresses = localAddresses();
   return async (request, response, next) => {
     const url = new URL(request.url, `http://${request.headers.host || 'localhost'}`);
     if (!url.pathname.startsWith('/__thumbnail/')) return next();
 
     if (url.pathname === '/__thumbnail/capability' && request.method === 'GET') {
-      return json(response, 200, { writable: isLocalRequest(request, addresses) && hasValidOrigin(request) });
+      return json(response, 200, { writable: hasValidOrigin(request) });
     }
 
     if (url.pathname === '/__thumbnail/file' && request.method === 'GET') {
@@ -155,8 +154,8 @@ export function createThumbnailMiddleware(projectRoot, suppressedHotUpdates = ne
     }
 
     if (url.pathname !== '/__thumbnail/save' || request.method !== 'POST') return next();
-    if (!isLocalRequest(request, addresses) || !hasValidOrigin(request)) {
-      return json(response, 403, { error: 'READ_ONLY_CLIENT' });
+    if (!hasValidOrigin(request)) {
+      return json(response, 403, { error: 'INVALID_ORIGIN' });
     }
 
     let tempPath;
@@ -197,7 +196,7 @@ export function thumbnailPlugin() {
     server.middlewares.use(createThumbnailMiddleware(server.config.root, suppressedHotUpdates));
   };
   return {
-    name: 'local-model-thumbnail-writer',
+    name: 'model-thumbnail-writer',
     configureServer: install,
     configurePreviewServer: install,
     handleHotUpdate(context) {

@@ -436,8 +436,7 @@ echo.
 echo ==================================================
 echo                  一键重启服务
 echo ==================================================
->"%STOP_REQUEST_FILE%" echo stop
-"!NODE_CMD!" "%RESTART_HELPER%" "%PORT%" "%OUT_LOG%" "%ERR_LOG%" "%PID_FILE%"
+"!NODE_CMD!" "%RESTART_HELPER%" "%PORT%" "%OUT_LOG%" "%ERR_LOG%" "%PID_FILE%" "%STOP_REQUEST_FILE%"
 if errorlevel 1 (
   echo.
   echo [失败] 服务重启失败，请查看上方提示或 %ERR_LOG%。

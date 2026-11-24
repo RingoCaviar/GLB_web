@@ -8,6 +8,7 @@
     "dev": "vite --host 0.0.0.0",
     "build": "vite build && node scripts/create-static-launcher.mjs",
     "preview": "vite preview --host 0.0.0.0",
+    "test:restart-vite": "node --test tests/restart-vite.mjs",
     "test:camera": "node tests/camera-constraints.mjs",
     "test:shared-camera": "node tests/shared-camera-framing.mjs",
     "test:camera-application": "node tests/camera-framing-application.mjs",
@@ -18,10 +19,12 @@
     "test:thumbnail": "node tests/thumbnail-middleware.mjs",
     "test:thumbnail-camera": "node tests/thumbnail-camera-framing.mjs",
     "test:sequence": "node tests/sequence-previews.mjs",
+    "test:sequence-background-browser": "node tests/sequence-background-browser.mjs",
     "test:blender-sequence": "node tests/blender-sequence.mjs",
     "test:studio": "node tests/render-studio.mjs",
     "test:appearance-variants": "node tests/appearance-variants.mjs",
     "test:material-variant-browser": "node tests/material-variant-browser.mjs",
+    "test:realtime-postprocessing-browser": "node tests/realtime-postprocessing-browser.mjs",
     "test:material-reset-browser": "node tests/material-reset-browser.mjs",
     "test:studio-parameters": "node tests/render-studio-parameters.mjs",
     "test:environment-preview": "node tests/environment-preview.mjs",
@@ -42,6 +45,7 @@
   },
   "dependencies": {
     "@google/model-viewer": "4.3.1",
+    "@google/model-viewer-effects": "1.5.0",
     "three": "0.183.0"
   },
   "devDependencies": {

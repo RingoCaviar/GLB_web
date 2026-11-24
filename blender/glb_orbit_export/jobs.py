@@ -10,8 +10,9 @@ from pathlib import Path
 
 import bpy
 
-from .rig import confirmed_framing
+from .rig import confirmed_framing, get_framing_setup
 from .sequence import format_angle, parse_angles, select_pose, validate_product_name
+from .viewport_preview import end_object_preview
 
 
 STAGE_MARKER = ".glb-orbit-render"
@@ -131,8 +132,10 @@ class RenderJob:
 
 
 def start_job(scene, view_layer, settings, preview, angle_index=0, frame_number=1):
+    end_object_preview()
     view_layer.update()
-    framing = confirmed_framing(settings, bpy.context.evaluated_depsgraph_get())
+    setup = get_framing_setup(settings)
+    framing = confirmed_framing(setup, bpy.context.evaluated_depsgraph_get())
     angles = parse_angles(settings.angles)
     preview_title = ""
     if preview:
@@ -149,7 +152,7 @@ def start_job(scene, view_layer, settings, preview, angle_index=0, frame_number=
         config = {
             "mode": "preview" if preview else "export",
             "motion_mode": settings.motion_mode,
-            "target": settings.framing_source.name,
+            "target": setup.framing_source.name,
             "scene": scene.name,
             "view_layer": view_layer.name,
             "framing": asdict(framing),

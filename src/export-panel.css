@@ -1,0 +1,195 @@
+.export-section {
+  --export-surface: color-mix(in srgb, var(--panel-accent) 7%, var(--panel-base));
+  --export-input: color-mix(in srgb, var(--panel-accent) 10%, var(--panel-surface));
+  --export-warning: #f2bb80;
+  flex: 0 1 auto;
+  min-block-size: 49px;
+  max-block-size: 44%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scroll-padding-block-start: 48px;
+  scrollbar-width: thin;
+  scrollbar-gutter: stable;
+  padding: 0 20px 4px;
+  border-color: var(--panel-divider);
+  background: var(--export-surface);
+}
+
+body[data-theme="light"] .export-section {
+  --export-input: #f8fbf9;
+  --export-warning: #854719;
+}
+
+.model-panel .export-section :is(.select-row select, .color-control input) {
+  border-color: var(--panel-control-border);
+  color: var(--panel-control-ink);
+  background: var(--export-input);
+}
+
+.export-heading {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 1;
+  min-block-size: 44px;
+  padding-block: 12px;
+  color: var(--panel-accent);
+  background: var(--export-surface);
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.35;
+  cursor: pointer;
+}
+
+.model-panel .export-heading:focus-visible { outline-offset: -2px; }
+
+.export-background-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 12px;
+  margin-bottom: 8px;
+}
+
+.model-panel .export-background-controls > :is(.switch-row, .color-row) {
+  min-height: 36px;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.export-background-controls .color-control { gap: 5px; }
+
+.export-dimension {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.export-section .export-dimension label {
+  color: var(--panel-muted);
+}
+
+.export-dimension > span {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  border: 1px solid var(--panel-control-border);
+  border-radius: 7px;
+  background: var(--export-input);
+}
+
+.export-dimension > span:has(input:focus-visible) {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.export-section .export-dimension label + span input {
+  font-variant-numeric: tabular-nums;
+}
+
+.export-section .export-help,
+.export-dimension-feedback {
+  margin: 5px 0 0;
+  color: var(--panel-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.export-dimension-feedback {
+  margin: 0;
+  color: var(--export-warning);
+}
+
+.export-dimension-feedback:empty {
+  position: absolute;
+}
+
+.export-background-help {
+  margin-bottom: 8px;
+}
+
+.export-section .switch-row strong > label {
+  cursor: pointer;
+}
+
+.export-section .color-control code {
+  color: var(--panel-muted);
+  font-size: 12px;
+}
+
+.export-advanced {
+  margin-top: 8px;
+  border-top: 1px solid var(--panel-divider);
+}
+
+.export-advanced summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 4px 4px 4px 0;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1.35;
+  list-style: none;
+}
+
+.export-advanced summary::-webkit-details-marker { display: none; }
+
+.export-advanced summary:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.export-advanced summary::after {
+  content: '';
+  width: 6px;
+  height: 6px;
+  flex: 0 0 6px;
+  border: solid currentColor;
+  border-width: 0 1px 1px 0;
+  transform: rotate(45deg) translateY(-2px);
+}
+
+.export-advanced[open] summary::after {
+  transform: rotate(225deg);
+}
+
+.export-advanced summary > span:first-child {
+  flex: 1;
+}
+
+#exportQualitySummary {
+  color: var(--panel-muted);
+  font-size: 12px;
+}
+
+.export-section .export-advanced .select-row {
+  margin: 8px 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.export-section .export-capability {
+  margin: 12px 0 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--panel-divider);
+}
+
+@media (any-pointer: coarse) {
+  .export-advanced summary,
+  .export-section .color-control input {
+    min-height: 44px;
+  }
+
+  .export-section .color-control input {
+    min-width: 44px;
+  }
+}
+
+@media (max-width: 480px) {
+  .export-section { max-block-size: 35%; padding-inline: 14px; }
+  .export-background-controls .color-control code { display: none; }
+}

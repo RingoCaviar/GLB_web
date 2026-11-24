@@ -9,6 +9,10 @@ function storage(initial = null) {
 
 const savedStorage = storage();
 const options = new ExportOptions({ maximumDimension: 2048, storage: savedStorage });
+assert.equal(options.getSnapshot().exportQuality, ExportQualityMode.HIGH);
+assert.equal(options.getSnapshot().textureDetailMode, 'adaptive');
+assert.equal(options.getExportPlan().antiAlias, 'fxaa');
+assert.equal(new ExportOptions({ storage: storage(ExportQualityMode.STANDARD) }).getExportPlan().antiAlias, 'none');
 assert.equal(options.setOption('width', 4096).width, 2048);
 assert.equal(options.setOption('width', 'invalid').width, 2048);
 assert.equal(options.setOption('height', 32).height, 64);
@@ -23,6 +27,8 @@ assert.equal(restored.getSnapshot().textureDetailMode, 'adaptive');
 snapshot = options.setOption('preserveShadow', true);
 assert.equal(snapshot.preserveShadow, false);
 snapshot = options.setOption('transparent', true);
+assert.equal(options.getExportPlan().antiAlias, 'none', '透明导出使用标准采样');
+assert.equal(snapshot.exportQuality, ExportQualityMode.HIGH, '透明背景应保留用户的质量偏好');
 snapshot = options.setOption('preserveShadow', true);
 assert.equal(snapshot.preserveShadow, true);
 snapshot = options.setOption('transparent', false);
